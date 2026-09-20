@@ -91,11 +91,11 @@ func handleCreateOrder(ctx context.Context, req events.APIGatewayV2HTTPRequest) 
 		Qty:       1,
 	}
 
-	// Call the transaction function you wrote in Phase 2!
+	// Call the transaction function we wrote in Phase 2!
 	err := inventory.Reserve(ctx, db, productsTable, ordersTable, order)
 
 	if err != nil {
-		// MAGICAL ERROR PARSING (See Explanation Below!)
+		// MAGICAL ERROR PARSING 
 		var tce *types.TransactionCanceledException
 		if errors.As(err, &tce) {
 			// Reason 0 is our Stock Check. Reason 1 is our Idempotency Check.
