@@ -56,13 +56,13 @@ export class InfraStack extends cdk.Stack {
       apiName: 'FlashCart API',
     });
 
-    // 3. Route all traffic (ANY method, to any path) to our Lambda
+    // Route all traffic (ANY method, to any path) to our Lambda
     httpApi.addRoutes({
       path: '/{proxy+}',
       integration: lambdaIntegration,
     });
 
-    // 4. Output the URL to the terminal after deployment!
+    // Output the URL to the terminal after deployment!
     new cdk.CfnOutput(this, 'ApiUrl', {
       value: httpApi.apiEndpoint,
     });
