@@ -7,6 +7,7 @@ import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import * as sqs from 'aws-cdk-lib/aws-sqs'; // <-- NEW: Import SQS (Queues)
 import * as pipes from 'aws-cdk-lib/aws-pipes'; // <-- NEW: Import Pipes
 import * as iam from 'aws-cdk-lib/aws-iam'; // <-- NEW: Import Security Roles
+import { SqsEventSource } from 'aws-cdk-lib/aws-lambda-event-sources';
 import * as path from 'path';
 
 export class InfraStack extends cdk.Stack {
@@ -31,63 +32,73 @@ export class InfraStack extends cdk.Stack {
       stream: dynamodb.StreamViewType.NEW_IMAGE, 
     });
 
-    // =====================================================================
-    // 2. THE OUTBOX QUEUE (SQS) & PLUMBING (EventBridge Pipes)
+     // =====================================================================
+    // 2. THE OUTBOX QUEUE & DEAD-LETTER QUEUE
     // =====================================================================
     
-    // Create the waiting room for orders waiting to be fulfilled
-    const fulfillmentQueue = new sqs.Queue(this, 'FulfillmentQueue');
+    // NEW: The Dead-Letter Queue. If a message fails 3 times, it goes here!
+    const deadLetterQueue = new sqs.Queue(this, 'OrderDLQ');
 
-    // Security: Create a "badge" that allows AWS Pipes to read the DB and send to the Queue
+    const fulfillmentQueue = new sqs.Queue(this, 'FulfillmentQueue', {
+      deadLetterQueue: {
+        queue: deadLetterQueue,
+        maxReceiveCount: 3, // Retry 3 times before giving up
+      }
+    });
+
     const pipeRole = new iam.Role(this, 'PipeRole', {
       assumedBy: new iam.ServicePrincipal('pipes.amazonaws.com'),
     });
     ordersTable.grantStreamRead(pipeRole);
     fulfillmentQueue.grantSendMessages(pipeRole);
 
-    // Create the Pipe connecting the Database Stream to the SQS Queue
     new pipes.CfnPipe(this, 'OrderOutboxPipe', {
       name: 'OrderOutboxPipe',
       roleArn: pipeRole.roleArn,
-      source: ordersTable.tableStreamArn!, // From the database...
-      sourceParameters: {
-        dynamoDbStreamParameters: {
-          startingPosition: 'LATEST',
-          batchSize: 1, // Move one order at a time
-        }
-      },
-      target: fulfillmentQueue.queueArn, // ...To the Queue!
+      source: ordersTable.tableStreamArn!,
+      sourceParameters: { dynamoDbStreamParameters: { startingPosition: 'LATEST', batchSize: 1 } },
+      target: fulfillmentQueue.queueArn,
     });
 
-
     // =====================================================================
-    // 3. COMPUTE (The API Server)
+    // 3. COMPUTE (API & WORKER)
     // =====================================================================
+    
+    // The original API (Hostess)
     const apiLambda = new lambda.Function(this, 'FlashCartApiLambda', {
       runtime: lambda.Runtime.PROVIDED_AL2023,
       architecture: lambda.Architecture.ARM_64,
       handler: 'bootstrap',
       code: lambda.Code.fromAsset(path.join(__dirname, '../../backend/cmd/api')),
-      environment: {
-        PRODUCTS_TABLE: productsTable.tableName,
-        ORDERS_TABLE: ordersTable.tableName,
-      }
+      environment: { PRODUCTS_TABLE: productsTable.tableName, ORDERS_TABLE: ordersTable.tableName }
+    });
+
+    // NEW: The Worker (Shipping Department)
+    const workerLambda = new lambda.Function(this, 'FlashCartWorkerLambda', {
+      runtime: lambda.Runtime.PROVIDED_AL2023,
+      architecture: lambda.Architecture.ARM_64,
+      handler: 'bootstrap',
+      code: lambda.Code.fromAsset(path.join(__dirname, '../../backend/cmd/worker')),
+      environment: { PRODUCTS_TABLE: productsTable.tableName, ORDERS_TABLE: ordersTable.tableName }
     });
 
     productsTable.grantReadWriteData(apiLambda);
     ordersTable.grantReadWriteData(apiLambda);
+    
+    productsTable.grantReadWriteData(workerLambda);
+    ordersTable.grantReadWriteData(workerLambda);
+
+    // NEW: Plug the SQS Queue into the Worker Lambda!
+    workerLambda.addEventSource(new SqsEventSource(fulfillmentQueue, {
+      reportBatchItemFailures: true, // Let Go tell AWS exactly which message failed
+    }));
 
     // =====================================================================
     // 4. API GATEWAY
     // =====================================================================
     const lambdaIntegration = new HttpLambdaIntegration('ApiIntegration', apiLambda);
-    const httpApi = new apigwv2.HttpApi(this, 'FlashCartHttpApi', {
-      apiName: 'FlashCart API',
-    });
-    httpApi.addRoutes({
-      path: '/{proxy+}',
-      integration: lambdaIntegration,
-    });
+    const httpApi = new apigwv2.HttpApi(this, 'FlashCartHttpApi', { apiName: 'FlashCart API' });
+    httpApi.addRoutes({ path: '/{proxy+}', integration: lambdaIntegration });
 
     new cdk.CfnOutput(this, 'ApiUrl', { value: httpApi.apiEndpoint });
   }
