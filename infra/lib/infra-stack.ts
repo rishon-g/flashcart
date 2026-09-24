@@ -57,7 +57,16 @@ export class InfraStack extends cdk.Stack {
       name: 'OrderOutboxPipe',
       roleArn: pipeRole.roleArn,
       source: ordersTable.tableStreamArn!,
-      sourceParameters: { dynamoDbStreamParameters: { startingPosition: 'LATEST', batchSize: 1 } },
+      sourceParameters: {
+        // NEW: The Filter! Only grab brand new orders, ignore updates!
+        filterCriteria: {
+          filters: [{ pattern: '{ "eventName": ["INSERT"] }' }]
+        },
+        dynamoDbStreamParameters: { 
+          startingPosition: 'LATEST', 
+          batchSize: 1 
+        }
+      },
       target: fulfillmentQueue.queueArn,
     });
 
