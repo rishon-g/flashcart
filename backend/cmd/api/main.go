@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"log/slog" // <-- NEW: Structured Logging
+	"fmt" // <-- NEW
+	"log/slog"
 	"os"
 	"strings"
+	"time" // <-- NEW
 
 	"flashcart/backend/internal/inventory"
 
@@ -26,13 +28,6 @@ func handler(ctx context.Context, req events.APIGatewayV2HTTPRequest) (events.AP
 	path := req.RawPath
 	method := req.RequestContext.HTTP.Method
 
-	// Structured logging: This prints a JSON log every time someone visits the API
-	slog.Info("Incoming request", 
-		slog.String("method", method), 
-		slog.String("path", path),
-		slog.String("request_id", req.RequestContext.RequestID),
-	)
-
 	if strings.HasPrefix(path, "/admin/products") && method == "POST" {
 		return handleAdminSeed(ctx, req)
 	} else if strings.HasPrefix(path, "/products/") && method == "GET" {
@@ -40,7 +35,7 @@ func handler(ctx context.Context, req events.APIGatewayV2HTTPRequest) (events.AP
 	} else if strings.HasPrefix(path, "/orders") && method == "POST" {
 		return handleCreateOrder(ctx, req)
 	} else if strings.HasPrefix(path, "/orders/") && method == "GET" {
-		return handleGetOrder(ctx, req) // <-- NEW: The missing endpoint route!
+		return handleGetOrder(ctx, req)
 	}
 
 	return buildResponse(404, map[string]string{"error": "Route not found"})
@@ -92,20 +87,20 @@ func handleCreateOrder(ctx context.Context, req events.APIGatewayV2HTTPRequest) 
 		var tce *types.TransactionCanceledException
 		if errors.As(err, &tce) {
 			if *tce.CancellationReasons[0].Code == "ConditionalCheckFailed" {
+				// NEW: Emit a metric that a user was rejected because we are sold out!
+				logEMFMetric("SoldOutRejections", 1)
 				return buildResponse(409, map[string]string{"error": "SOLD_OUT"})
 			}
 			if *tce.CancellationReasons[1].Code == "ConditionalCheckFailed" {
 				return buildResponse(200, map[string]string{"message": "Order already processed (Idempotent replay)"})
 			}
 		}
-		slog.Error("Database error", slog.String("error", err.Error())) // Log real errors!
 		return buildResponse(500, map[string]string{"error": "Internal Server Error"})
 	}
 
 	return buildResponse(201, map[string]string{"message": "Order placed successfully!"})
 }
 
-// NEW: The function to let a user check their order status!
 func handleGetOrder(ctx context.Context, req events.APIGatewayV2HTTPRequest) (events.APIGatewayV2HTTPResponse, error) {
 	parts := strings.Split(req.RawPath, "/")
 	orderID := parts[len(parts)-1]
@@ -114,33 +109,31 @@ func handleGetOrder(ctx context.Context, req events.APIGatewayV2HTTPRequest) (ev
 		TableName: aws.String(ordersTable),
 		Key:       map[string]types.AttributeValue{"orderId": &types.AttributeValueMemberS{Value: orderID}},
 	})
-
 	if result.Item == nil {
 		return buildResponse(404, map[string]string{"error": "Order not found"})
 	}
-
-	status := result.Item["status"].(*types.AttributeValueMemberS).Value
-	return buildResponse(200, map[string]string{"orderId": orderID, "status": status})
+	return buildResponse(200, map[string]string{"orderId": orderID, "status": result.Item["status"].(*types.AttributeValueMemberS).Value})
 }
 
 func buildResponse(statusCode int, body map[string]string) (events.APIGatewayV2HTTPResponse, error) {
 	jsonBody, _ := json.Marshal(body)
-	return events.APIGatewayV2HTTPResponse{
-		StatusCode: statusCode,
-		Headers:    map[string]string{"Content-Type": "application/json"},
-		Body:       string(jsonBody),
-	}, nil
+	return events.APIGatewayV2HTTPResponse{StatusCode: statusCode, Headers: map[string]string{"Content-Type": "application/json"}, Body: string(jsonBody)}, nil
+}
+
+// NEW: The EMF Magic Trick. Printing this specific JSON shape creates a free graph in AWS.
+func logEMFMetric(metricName string, value int) {
+	timestamp := time.Now().UnixMilli()
+	emf := fmt.Sprintf(`{"_aws":{"Timestamp":%d,"CloudWatchMetrics":[{"Namespace":"FlashCart","Dimensions":[[]],"Metrics":[{"Name":"%s"}]}]},"%s":%d}`, timestamp, metricName, metricName, value)
+	fmt.Println(emf)
 }
 
 func main() {
-	// Set up our logger to output as JSON so AWS CloudWatch can read it easily
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	slog.SetDefault(logger)
 
 	productsTable = os.Getenv("PRODUCTS_TABLE")
 	ordersTable = os.Getenv("ORDERS_TABLE")
 
-	// We already have our "Cold-start performance" optimization here
 	cfg, _ := config.LoadDefaultConfig(context.TODO())
 	db = dynamodb.NewFromConfig(cfg)
 

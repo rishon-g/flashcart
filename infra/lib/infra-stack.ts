@@ -8,6 +8,7 @@ import * as sqs from 'aws-cdk-lib/aws-sqs'; // <-- NEW: Import SQS (Queues)
 import * as pipes from 'aws-cdk-lib/aws-pipes'; // <-- NEW: Import Pipes
 import * as iam from 'aws-cdk-lib/aws-iam'; // <-- NEW: Import Security Roles
 import { SqsEventSource } from 'aws-cdk-lib/aws-lambda-event-sources';
+import * as cloudwatch from 'aws-cdk-lib/aws-cloudwatch';
 import * as path from 'path';
 
 export class InfraStack extends cdk.Stack {
@@ -99,6 +100,51 @@ export class InfraStack extends cdk.Stack {
     const lambdaIntegration = new HttpLambdaIntegration('ApiIntegration', apiLambda);
     const httpApi = new apigwv2.HttpApi(this, 'FlashCartHttpApi', { apiName: 'FlashCart API' });
     httpApi.addRoutes({ path: '/{proxy+}', integration: lambdaIntegration });
+
+    // =====================================================================
+    // 5. OBSERVABILITY (Dashboards & Alarms)
+    // =====================================================================
+    
+    // 1. Create the Dashboard Board
+    const dashboard = new cloudwatch.Dashboard(this, 'FlashCartDashboard', {
+      dashboardName: 'FlashCart-Live-Metrics',
+    });
+
+    // 2. Graph: API Latency (How fast is our Hostess?)
+    const latencyWidget = new cloudwatch.GraphWidget({
+      title: 'API Latency (p50 & p99)',
+      left: [
+        httpApi.metric('Latency', { statistic: 'p50' }),
+        httpApi.metric('Latency', { statistic: 'p99' })
+      ]
+    });
+
+    // 3. Graph: The EMF Metrics we just created in Go!
+    const customMetricsWidget = new cloudwatch.GraphWidget({
+      title: 'Sales & Failures',
+      left: [
+        new cloudwatch.Metric({ namespace: 'FlashCart', metricName: 'OrdersPlaced', statistic: 'sum' }),
+        new cloudwatch.Metric({ namespace: 'FlashCart', metricName: 'PaymentFailures', statistic: 'sum' }),
+        new cloudwatch.Metric({ namespace: 'FlashCart', metricName: 'SoldOutRejections', statistic: 'sum' })
+      ]
+    });
+
+    // 4. Graph: Dead Letter Queue Size
+    const dlqWidget = new cloudwatch.GraphWidget({
+      title: 'Dead Letter Queue (Poison Pills)',
+      left: [ deadLetterQueue.metricApproximateNumberOfMessagesVisible() ]
+    });
+
+    // Add the graphs to the board!
+    dashboard.addWidgets(latencyWidget, customMetricsWidget, dlqWidget);
+
+    // 5. ALARM: If a message hits the Dead Letter Queue, sound the alarm!
+    new cloudwatch.Alarm(this, 'DLQAlarm', {
+      metric: deadLetterQueue.metricApproximateNumberOfMessagesVisible(),
+      threshold: 1,      // If we get even ONE message stuck...
+      evaluationPeriods: 1, // ...trigger the alarm immediately.
+      comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+    });
 
     new cdk.CfnOutput(this, 'ApiUrl', { value: httpApi.apiEndpoint });
   }
