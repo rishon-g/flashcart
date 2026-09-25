@@ -27,6 +27,15 @@ jobs:
         with:
           node-version: '20'
 
+      - name: Debug OIDC token claims
+        run: |
+            IDTOKEN=$(curl -sSL -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=sts.amazonaws.com" | jq -r '.value')
+            echo "$IDTOKEN" | cut -d. -f2 | base64 -d 2>/dev/null | jq .
+        env:
+            ACTIONS_ID_TOKEN_REQUEST_TOKEN: ${{ env.ACTIONS_ID_TOKEN_REQUEST_TOKEN }}
+            ACTIONS_ID_TOKEN_REQUEST_URL: ${{ env.ACTIONS_ID_TOKEN_REQUEST_URL }}
+
       # ADD THIS NEW STEP!
       - name: Print exact GitHub Repo Name
         run: echo "My exact ID is repo:${{ github.repository }}:*"
