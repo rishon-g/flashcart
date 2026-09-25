@@ -1,0 +1,46 @@
+name: Deploy FlashCart to AWS
+
+# Trigger this robot whenever code is pushed to the 'main' branch
+on:
+  push:
+    branches: [ "main" ]
+
+# allow GitHub to request the temporary AWS token.
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      - name: Setup Node (for CDK)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Configure AWS Credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::201298068477:role/InfraStack-GitHubDeployRoleED73FD64-UJpav1r4Z4T9 
+          aws-region: us-east-1
+
+      - name: Compile Go API
+        run: cd backend/cmd/api && GOOS=linux GOARCH=arm64 go build -tags lambda.norpc -o bootstrap main.go
+
+      - name: Compile Go Worker
+        run: cd backend/cmd/worker && GOOS=linux GOARCH=arm64 go build -tags lambda.norpc -o bootstrap main.go
+
+      - name: Install CDK Dependencies
+        run: cd infra && npm ci
+
+      - name: Deploy to AWS
+        run: cd infra && npx cdk deploy --require-approval never

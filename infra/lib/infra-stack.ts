@@ -155,6 +155,33 @@ export class InfraStack extends cdk.Stack {
       comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
     });
 
+    // =====================================================================
+    // 6. CI/CD SECURITY (OIDC)
+    // =====================================================================
+    
+    // 1. Tell AWS to trust GitHub's authentication system
+    const githubProvider = new iam.OpenIdConnectProvider(this, 'GithubOIDCProvider', {
+      url: 'https://token.actions.githubusercontent.com',
+      clientIds: ['sts.amazonaws.com'],
+    });
+
+    // 2. Create a Role (a temporary keycard) that GitHub can assume
+    const githubRole = new iam.Role(this, 'GitHubDeployRole', {
+      assumedBy: new iam.WebIdentityPrincipal(githubProvider.openIdConnectProviderArn, {
+        StringLike: {
+          // SECURITY: ONLY allow your specific repository to assume this role!
+          'token.actions.githubusercontent.com:sub': 'repo:rishon-g/flashcart:*', 
+        }
+      }),
+      description: 'Role assumed by GitHub Actions to deploy the CDK app',
+    });
+
+    // 3. Give this role permission to build AWS infrastructure (Admin access for the pipeline)
+    githubRole.addManagedPolicy(iam.ManagedPolicy.fromAwsManagedPolicyName('AdministratorAccess'));
+
+    // 4. Print the physical Role ID to the terminal so we can copy it to GitHub!
+    new cdk.CfnOutput(this, 'GitHubRoleArn', { value: githubRole.roleArn });
+
     new cdk.CfnOutput(this, 'ApiUrl', { value: httpApi.apiEndpoint });
   }
 }
