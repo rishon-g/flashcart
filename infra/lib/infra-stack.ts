@@ -167,16 +167,16 @@ export class InfraStack extends cdk.Stack {
 
     // 2. Create a Role (a temporary keycard) that GitHub can assume
     const githubRole = new iam.Role(this, 'GitHubDeployRole', {
-      assumedBy: new iam.WebIdentityPrincipal(githubProvider.openIdConnectProviderArn, {
-        StringEquals: {
-          'token.actions.githubusercontent.com:aud': 'sts.amazonaws.com',
-        },
-        StringLike: {
-          'token.actions.githubusercontent.com:sub': 'repo:rishon-g/flashcart:*', 
-        }
-      }),
-      description: 'Role assumed by GitHub Actions to deploy the CDK app',
-    });
+  assumedBy: new iam.WebIdentityPrincipal(githubProvider.openIdConnectProviderArn, {
+    StringEquals: {
+      'token.actions.githubusercontent.com:aud': 'sts.amazonaws.com',
+      'token.actions.githubusercontent.com:repository': 'rishon-g/flashcart',
+      'token.actions.githubusercontent.com:ref': 'refs/heads/main',
+      'token.actions.githubusercontent.com:job_workflow_ref': 'rishon-g/flashcart/.github/workflows/deploy.yml@refs/heads/main',
+    },
+  }),
+  description: 'Role assumed by GitHub Actions to deploy the CDK app',
+});
 
     // 3. Give this role permission to build AWS infrastructure (Admin access for the pipeline)
     githubRole.addManagedPolicy(iam.ManagedPolicy.fromAwsManagedPolicyName('AdministratorAccess'));
