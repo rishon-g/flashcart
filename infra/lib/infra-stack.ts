@@ -161,24 +161,22 @@ export class InfraStack extends cdk.Stack {
     
     // 1. Tell AWS to trust GitHub's authentication system
     const githubProvider = new iam.OpenIdConnectProvider(this, 'GithubOIDCProvider', {
-  url: 'https://token.actions.githubusercontent.com',
-  clientIds: ['sts.amazonaws.com'],
-  // ADD THIS LINE:
-  thumbprints: ['6938fd4d98bab03faadb97b34396831e3780aea1', '1c58a3a8518e8759bf075b76b750d4f2df264fcd'], 
-});
+      url: 'https://token.actions.githubusercontent.com',
+      clientIds: ['sts.amazonaws.com'],
+    });
 
+    // 2. Create a Role (a temporary keycard) that GitHub can assume
     const githubRole = new iam.Role(this, 'GitHubDeployRole', {
-  roleName: 'FlashCartGitHubDeployRole', // <--- ADD THIS LINE
-  assumedBy: new iam.WebIdentityPrincipal(githubProvider.openIdConnectProviderArn, {
-    StringEquals: {
-      'token.actions.githubusercontent.com:aud': 'sts.amazonaws.com',
-    },
-    StringLike: {
-      'token.actions.githubusercontent.com:sub': 'repo:rishon-g/flashcart:*', 
-    }
-  }),
-  description: 'Role assumed by GitHub Actions to deploy the CDK app',
-});
+      assumedBy: new iam.WebIdentityPrincipal(githubProvider.openIdConnectProviderArn, {
+        StringEquals: {
+          'token.actions.githubusercontent.com:aud': 'sts.amazonaws.com',
+        },
+        StringLike: {
+          'token.actions.githubusercontent.com:sub': 'repo:rishon-g/flashcart:*', 
+        }
+      }),
+      description: 'Role assumed by GitHub Actions to deploy the CDK app',
+    });
 
     // 3. Give this role permission to build AWS infrastructure (Admin access for the pipeline)
     githubRole.addManagedPolicy(iam.ManagedPolicy.fromAwsManagedPolicyName('AdministratorAccess'));
