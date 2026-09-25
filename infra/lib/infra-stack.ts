@@ -168,8 +168,10 @@ export class InfraStack extends cdk.Stack {
     // 2. Create a Role (a temporary keycard) that GitHub can assume
     const githubRole = new iam.Role(this, 'GitHubDeployRole', {
       assumedBy: new iam.WebIdentityPrincipal(githubProvider.openIdConnectProviderArn, {
+        StringEquals: {
+          'token.actions.githubusercontent.com:aud': 'sts.amazonaws.com',
+        },
         StringLike: {
-          // SECURITY: ONLY allow your specific repository to assume this role!
           'token.actions.githubusercontent.com:sub': 'repo:rishon-g/flashcart:*', 
         }
       }),
