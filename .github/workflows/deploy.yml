@@ -27,10 +27,19 @@ jobs:
         with:
           node-version: '20'
 
+      - name: Setup Node (for CDK)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # ADD THIS NEW STEP!
+      - name: Print exact GitHub Repo Name
+        run: echo "My exact ID is repo:${{ github.repository }}:*"
+
       - name: Configure AWS Credentials via OIDC
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: arn:aws:iam::201298068477:role/InfraStack-GitHubDeployRoleED73FD64-UJpav1r4Z4T9 
+          role-to-assume: arn:aws:iam::201298068477:role/InfraStack-GitHubDeployRoleED73FD64-UJpav1r4Z4T9
           aws-region: us-east-1
 
       - name: Compile Go API
