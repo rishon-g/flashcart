@@ -17,7 +17,7 @@ func main() {
 	dbClient := dynamodb.NewFromConfig(cfg)
 	sqsClient := sqs.NewFromConfig(cfg)
 
-	fmt.Println("🔍 Auditing FlashCart Database...")
+	fmt.Println("Auditing FlashCart Database...")
 
 	// 1. Auto-discover the Table and Queue names
 	productsTable, ordersTable := "", ""
@@ -59,7 +59,7 @@ func main() {
 	stock := product.Item["stock"].(*types.AttributeValueMemberN).Value
 
 	// 4. Print the Resume-Worthy Results!
-	fmt.Println("\n📊 --- FLASH-SALE RESULTS --- 📊")
+	fmt.Println("\n --- FLASH-SALE RESULTS --- 📊")
 	fmt.Printf("Total Unique Orders Processed: %d\n", len(uniqueOrders))
 	fmt.Printf("Confirmed (Sold): %d\n", confirmed)
 	fmt.Printf("Failed (Credit Card Declined): %d\n", failed)
@@ -69,6 +69,6 @@ func main() {
 		fmt.Println("Dead Letter Queue (Errors): 0 (Verified)")
 	}
 
-	fmt.Println("\n✅ MATH VERIFICATION:")
+	fmt.Println("\nMATH VERIFICATION:")
 	fmt.Println("Initial Stock (500) - Confirmed - Pending == Remaining Stock?")
 }
