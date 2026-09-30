@@ -39,6 +39,10 @@ jobs:
       - name: Compile Go Worker
         run: cd backend/cmd/worker && GOOS=linux GOARCH=arm64 go build -tags lambda.norpc -o bootstrap main.go
 
+      - name: Build React Frontend
+        run: cd web && npm ci && npm run build
+
+
       - name: Install CDK Dependencies
         run: cd infra && npm ci
 

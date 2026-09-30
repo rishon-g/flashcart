@@ -11,6 +11,12 @@ import { SqsEventSource } from 'aws-cdk-lib/aws-lambda-event-sources';
 import * as cloudwatch from 'aws-cdk-lib/aws-cloudwatch';
 import * as path from 'path';
 
+
+import * as s3 from 'aws-cdk-lib/aws-s3';
+import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
+import * as origins from 'aws-cdk-lib/aws-cloudfront-origins';
+import * as s3deploy from 'aws-cdk-lib/aws-s3-deployment';
+
 export class InfraStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
@@ -80,7 +86,8 @@ export class InfraStack extends cdk.Stack {
       architecture: lambda.Architecture.ARM_64,
       handler: 'bootstrap',
       code: lambda.Code.fromAsset(path.join(__dirname, '../../backend/cmd/api')),
-      environment: { PRODUCTS_TABLE: productsTable.tableName, ORDERS_TABLE: ordersTable.tableName }
+      environment: { PRODUCTS_TABLE: productsTable.tableName, ORDERS_TABLE: ordersTable.tableName },
+      memorySize: 1024, // we give it a memory boost
     });
 
     // NEW: The Worker (Shipping Department)
@@ -107,7 +114,15 @@ export class InfraStack extends cdk.Stack {
     // 4. API GATEWAY
     // =====================================================================
     const lambdaIntegration = new HttpLambdaIntegration('ApiIntegration', apiLambda);
-    const httpApi = new apigwv2.HttpApi(this, 'FlashCartHttpApi', { apiName: 'FlashCart API' });
+    const httpApi = new apigwv2.HttpApi(this, 'FlashCartHttpApi', { 
+      apiName: 'FlashCart API',
+      // NEW: Fix CORS so our React app is legally allowed to talk to the API!
+      corsPreflight: {
+        allowOrigins: ['*'], // Allow any website to connect
+        allowMethods: [apigwv2.CorsHttpMethod.ANY],
+        allowHeaders: ['*'],
+      },
+    });
     httpApi.addRoutes({ path: '/{proxy+}', integration: lambdaIntegration });
 
     // =====================================================================
@@ -177,6 +192,36 @@ export class InfraStack extends cdk.Stack {
   }),
   description: 'Role assumed by GitHub Actions to deploy the CDK app',
 });
+
+// =====================================================================
+    // 7. FRONTEND HOSTING (S3 & CloudFront)
+    // =====================================================================
+    
+    // 1. Create a secure hard drive (S3) to hold the React HTML/JS files
+    const websiteBucket = new s3.Bucket(this, 'FlashCartWebsiteBucket', {
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+      autoDeleteObjects: true,
+    });
+
+    // 2. Create the CDN (CloudFront) to serve the website globally over HTTPS
+    const distribution = new cloudfront.Distribution(this, 'FlashCartDistribution', {
+      defaultBehavior: {
+        origin: new origins.S3Origin(websiteBucket),
+        viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+      },
+      defaultRootObject: 'index.html',
+    });
+
+    // 3. Tell CDK to automatically upload our React files into the bucket!
+    new s3deploy.BucketDeployment(this, 'DeployWebsite', {
+      sources: [s3deploy.Source.asset(path.join(__dirname, '../../web/dist'))],
+      destinationBucket: websiteBucket,
+      distribution,
+      distributionPaths: ['/*'], // Tell the CDN to refresh instantly
+    });
+
+    // Output the final public Website URL!
+    new cdk.CfnOutput(this, 'WebsiteUrl', { value: distribution.distributionDomainName });
 
     // 3. Give this role permission to build AWS infrastructure (Admin access for the pipeline)
     githubRole.addManagedPolicy(iam.ManagedPolicy.fromAwsManagedPolicyName('AdministratorAccess'));
