@@ -117,7 +117,17 @@ func handleGetOrder(ctx context.Context, req events.APIGatewayV2HTTPRequest) (ev
 
 func buildResponse(statusCode int, body map[string]string) (events.APIGatewayV2HTTPResponse, error) {
 	jsonBody, _ := json.Marshal(body)
-	return events.APIGatewayV2HTTPResponse{StatusCode: statusCode, Headers: map[string]string{"Content-Type": "application/json"}, Body: string(jsonBody)}, nil
+	return events.APIGatewayV2HTTPResponse{
+		StatusCode: statusCode,
+		Headers: map[string]string{
+			"Content-Type": "application/json",
+			// NEW: Bulletproof CORS Headers!
+			"Access-Control-Allow-Origin":  "*",
+			"Access-Control-Allow-Headers": "Content-Type, Idempotency-Key",
+			"Access-Control-Allow-Methods": "OPTIONS, POST, GET",
+		},
+		Body: string(jsonBody),
+	}, nil
 }
 
 // NEW: The EMF Magic Trick. Printing this specific JSON shape creates a free graph in AWS.
