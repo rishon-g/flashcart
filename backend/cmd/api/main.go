@@ -28,6 +28,13 @@ func handler(ctx context.Context, req events.APIGatewayV2HTTPRequest) (events.AP
 	path := req.RawPath
 	method := req.RequestContext.HTTP.Method
 
+	slog.Info("Incoming request", slog.String("method", method), slog.String("path", path))
+
+	// NEW: Catch the secret Chrome Preflight request and say "200 OK"!
+	if method == "OPTIONS" {
+		return buildResponse(200, map[string]string{"message": "CORS OK"})
+	}
+
 	if strings.HasPrefix(path, "/admin/products") && method == "POST" {
 		return handleAdminSeed(ctx, req)
 	} else if strings.HasPrefix(path, "/products/") && method == "GET" {
