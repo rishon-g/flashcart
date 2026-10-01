@@ -4,6 +4,8 @@ import exec from 'k6/execution';
 
 // We will pass your API URL in through the terminal
 const API_URL = __ENV.API_URL; 
+// The admin token from Secrets Manager (see README), needed to seed stock
+const ADMIN_TOKEN = __ENV.ADMIN_TOKEN;
 
 export const options = {
   stages: [
@@ -16,7 +18,12 @@ export const options = {
 // 1. SETUP: This runs once before the attack starts to seed the 500 TVs
 export function setup() {
   console.log(`Seeding database at ${API_URL}...`);
-  http.post(`${API_URL}/admin/products`);
+  const res = http.post(`${API_URL}/admin/products`, null, {
+    headers: { 'X-Admin-Token': ADMIN_TOKEN },
+  });
+  if (res.status !== 201) {
+    exec.test.abort(`Seeding failed with status ${res.status}. Is ADMIN_TOKEN set?`);
+  }
 }
 
 // 2. THE ATTACK: This function runs thousands of times per second
