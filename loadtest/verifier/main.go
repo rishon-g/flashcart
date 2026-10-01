@@ -3,17 +3,32 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
+	"strconv"
 	"strings"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
-	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types" // <-- Added the missing types package!
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
+	sqstypes "github.com/aws/aws-sdk-go-v2/service/sqs/types"
 )
+
+// Must match the stock that POST /admin/products seeds
+const initialStock = 500
+
+func fail(format string, args ...any) {
+	fmt.Fprintf(os.Stderr, "ERROR: "+format+"\n", args...)
+	os.Exit(2)
+}
 
 func main() {
 	ctx := context.TODO()
-	cfg, _ := config.LoadDefaultConfig(ctx)
+	cfg, err := config.LoadDefaultConfig(ctx)
+	if err != nil {
+		fail("loading AWS config: %v", err)
+	}
 	dbClient := dynamodb.NewFromConfig(cfg)
 	sqsClient := sqs.NewFromConfig(cfg)
 
@@ -21,54 +36,117 @@ func main() {
 
 	// 1. Auto-discover the Table and Queue names
 	productsTable, ordersTable := "", ""
-	tables, _ := dbClient.ListTables(ctx, &dynamodb.ListTablesInput{})
-	for _, t := range tables.TableNames {
-		if strings.Contains(t, "ProductsTable") { productsTable = t }
-		if strings.Contains(t, "OrdersTable") { ordersTable = t }
+	tablePages := dynamodb.NewListTablesPaginator(dbClient, &dynamodb.ListTablesInput{})
+	for tablePages.HasMorePages() {
+		page, err := tablePages.NextPage(ctx)
+		if err != nil {
+			fail("listing tables: %v", err)
+		}
+		for _, t := range page.TableNames {
+			if strings.Contains(t, "ProductsTable") { productsTable = t }
+			if strings.Contains(t, "OrdersTable") { ordersTable = t }
+		}
+	}
+	if productsTable == "" || ordersTable == "" {
+		fail("could not find the FlashCart tables in this account/region")
 	}
 
-	dlqUrl := ""
-	queues, _ := sqsClient.ListQueues(ctx, &sqs.ListQueuesInput{})
-	for _, q := range queues.QueueUrls {
-		if strings.Contains(q, "OrderDLQ") { dlqUrl = q }
+	queues, err := sqsClient.ListQueues(ctx, &sqs.ListQueuesInput{QueueNamePrefix: aws.String("InfraStack-OrderDLQ")})
+	if err != nil || len(queues.QueueUrls) == 0 {
+		fail("could not find the dead-letter queue: %v", err)
 	}
+	dlqUrl := queues.QueueUrls[0]
 
-	// 2. Scan the Orders table to count Confirmed vs Failed
-	orders, _ := dbClient.Scan(ctx, &dynamodb.ScanInput{TableName: &ordersTable})
-	confirmed, failed, pending := 0, 0, 0
-	
-	// Map to track if any duplicate Order IDs slipped through
-	uniqueOrders := make(map[string]bool) 
-
-	for _, item := range orders.Items {
-		status := item["status"].(*types.AttributeValueMemberS).Value
-		orderId := item["orderId"].(*types.AttributeValueMemberS).Value
-		
-		if status == "CONFIRMED" { confirmed++ }
-		if status == "FAILED" { failed++ }
-		if status == "PENDING" { pending++ }
-		
-		uniqueOrders[orderId] = true
+	// 2. Scan every page of the Orders table and count orders by status
+	confirmed, failed, pending, other := 0, 0, 0, 0
+	orderPages := dynamodb.NewScanPaginator(dbClient, &dynamodb.ScanInput{TableName: &ordersTable})
+	for orderPages.HasMorePages() {
+		page, err := orderPages.NextPage(ctx)
+		if err != nil {
+			fail("scanning orders: %v", err)
+		}
+		for _, item := range page.Items {
+			status, _ := item["status"].(*types.AttributeValueMemberS)
+			switch {
+			case status == nil:
+				other++
+			case status.Value == "CONFIRMED":
+				confirmed++
+			case status.Value == "FAILED":
+				failed++
+			case status.Value == "PENDING":
+				pending++
+			default:
+				other++
+			}
+		}
 	}
 
 	// 3. Get the final TV stock
-	product, _ := dbClient.GetItem(ctx, &dynamodb.GetItemInput{
+	product, err := dbClient.GetItem(ctx, &dynamodb.GetItemInput{
 		TableName: &productsTable,
 		Key: map[string]types.AttributeValue{"productId": &types.AttributeValueMemberS{Value: "FLASH-TV-001"}},
 	})
-	stock := product.Item["stock"].(*types.AttributeValueMemberN).Value
-
-	// 4. Print the Resume-Worthy Results!
-	fmt.Println("\n --- FLASH-SALE RESULTS --- 📊")
-	fmt.Printf("Total Unique Orders Processed: %d\n", len(uniqueOrders))
-	fmt.Printf("Confirmed (Sold): %d\n", confirmed)
-	fmt.Printf("Failed (Credit Card Declined): %d\n", failed)
-	fmt.Printf("Pending (Stuck in Queue): %d\n", pending)
-	fmt.Printf("Remaining TV Stock: %s\n", stock)
-	if dlqUrl != "" {
-		fmt.Println("Dead Letter Queue (Errors): 0 (Verified)")
+	if err != nil || product.Item == nil {
+		fail("reading FLASH-TV-001: %v", err)
+	}
+	stockAttr, ok := product.Item["stock"].(*types.AttributeValueMemberN)
+	if !ok {
+		fail("FLASH-TV-001 has no numeric stock attribute")
+	}
+	stock, err := strconv.Atoi(stockAttr.Value)
+	if err != nil {
+		fail("parsing stock %q: %v", stockAttr.Value, err)
 	}
 
-	fmt.Println("\nMATH VERIFICATION:")
-	fmt.Println("Initial Stock (500) - Confirmed - Pending == Remaining Stock?")
+	// 4. Read the real DLQ depth (visible + in flight)
+	attrs, err := sqsClient.GetQueueAttributes(ctx, &sqs.GetQueueAttributesInput{
+		QueueUrl: &dlqUrl,
+		AttributeNames: []sqstypes.QueueAttributeName{
+			sqstypes.QueueAttributeNameApproximateNumberOfMessages,
+			sqstypes.QueueAttributeNameApproximateNumberOfMessagesNotVisible,
+		},
+	})
+	if err != nil {
+		fail("reading DLQ attributes: %v", err)
+	}
+	visible, _ := strconv.Atoi(attrs.Attributes[string(sqstypes.QueueAttributeNameApproximateNumberOfMessages)])
+	inFlight, _ := strconv.Atoi(attrs.Attributes[string(sqstypes.QueueAttributeNameApproximateNumberOfMessagesNotVisible)])
+	dlqDepth := visible + inFlight
+
+	total := confirmed + failed + pending + other
+	fmt.Println("\n --- FLASH-SALE RESULTS --- 📊")
+	fmt.Printf("Total Orders:                  %d\n", total)
+	fmt.Printf("Confirmed (Sold):              %d\n", confirmed)
+	fmt.Printf("Failed (Credit Card Declined): %d\n", failed)
+	fmt.Printf("Pending (Still in Queue):      %d\n", pending)
+	if other > 0 {
+		fmt.Printf("Unknown status:                %d\n", other)
+	}
+	fmt.Printf("Remaining TV Stock:            %d\n", stock)
+	fmt.Printf("Dead Letter Queue depth:       %d\n", dlqDepth)
+
+	// 5. Check the invariants. Declined orders return their unit, so only CONFIRMED and PENDING hold stock.
+	expected := initialStock - confirmed - pending
+	fmt.Println("\nINVARIANT CHECKS:")
+	ok = true
+	check := func(pass bool, format string, args ...any) {
+		mark := "PASS"
+		if !pass {
+			mark, ok = "FAIL", false
+		}
+		fmt.Printf("  [%s] %s\n", mark, fmt.Sprintf(format, args...))
+	}
+	check(stock == expected, "%d initial - %d confirmed - %d pending = %d, remaining stock is %d", initialStock, confirmed, pending, expected, stock)
+	check(stock >= 0, "stock never went negative (%d)", stock)
+	check(confirmed+pending <= initialStock, "units held by orders (%d) <= initial stock (%d)", confirmed+pending, initialStock)
+	check(other == 0, "every order has a known status (%d unknown)", other)
+	check(dlqDepth == 0, "dead-letter queue is empty (%d messages)", dlqDepth)
+	if pending > 0 {
+		fmt.Println("  Note: pending orders are still being processed. Re-run once the queue drains.")
+	}
+
+	if !ok {
+		os.Exit(1)
+	}
 }
