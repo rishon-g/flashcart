@@ -1,11 +1,11 @@
 name: Deploy FlashCart to AWS
 
-# Trigger this robot whenever code is pushed to the 'main' branch
+# runs on every push to main
 on:
   push:
     branches: [ "main" ]
 
-# allow GitHub to request the temporary AWS token.
+# needed to request an oidc token for aws
 permissions:
   id-token: write
   contents: read
@@ -13,7 +13,7 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
-    # DynamoDB Local for the concurrent oversell test (the image runs in-memory by default)
+    # dynamodb local for the oversell test (in-memory by default)
     services:
       dynamodb:
         image: amazon/dynamodb-local

@@ -5,11 +5,11 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
-	"fmt" // <-- NEW
+	"fmt"
 	"log/slog"
 	"os"
 	"strings"
-	"time" // <-- NEW
+	"time"
 
 	"flashcart/backend/internal/inventory"
 
@@ -33,7 +33,7 @@ func handler(ctx context.Context, req events.APIGatewayV2HTTPRequest) (events.AP
 
 	slog.Info("Incoming request", slog.String("method", method), slog.String("path", path))
 
-	// NEW: Catch the secret Chrome Preflight request and say "200 OK"!
+	// answer cors preflight requests directly
 	if method == "OPTIONS" {
 		return buildResponse(200, map[string]string{"message": "CORS OK"})
 	}
@@ -52,7 +52,7 @@ func handler(ctx context.Context, req events.APIGatewayV2HTTPRequest) (events.AP
 }
 
 func handleAdminSeed(ctx context.Context, req events.APIGatewayV2HTTPRequest) (events.APIGatewayV2HTTPResponse, error) {
-	// Only callers holding the admin token (stored in Secrets Manager) may reset stock
+	// only callers with the admin token can reset stock
 	given := req.Headers["x-admin-token"]
 	if adminToken == "" || subtle.ConstantTimeCompare([]byte(given), []byte(adminToken)) != 1 {
 		return buildResponse(401, map[string]string{"error": "Invalid or missing X-Admin-Token header"})
@@ -114,12 +114,12 @@ func handleCreateOrder(ctx context.Context, req events.APIGatewayV2HTTPRequest) 
 	if err != nil {
 		var tce *types.TransactionCanceledException
 		if errors.As(err, &tce) && len(tce.CancellationReasons) == 2 {
-			// Check the replay first: a retried key must get 200 even after the sale sells out
+			// check for a replay first so a retried key still gets 200 after a sellout
 			if aws.ToString(tce.CancellationReasons[1].Code) == "ConditionalCheckFailed" {
 				return buildResponse(200, map[string]string{"message": "Order already processed (Idempotent replay)"})
 			}
 			if aws.ToString(tce.CancellationReasons[0].Code) == "ConditionalCheckFailed" {
-				// NEW: Emit a metric that a user was rejected because we are sold out!
+				// count sold out rejections
 				logEMFMetric("SoldOutRejections", 1)
 				return buildResponse(409, map[string]string{"error": "SOLD_OUT"})
 			}
@@ -159,7 +159,7 @@ func buildResponse(statusCode int, body map[string]string) (events.APIGatewayV2H
 		StatusCode: statusCode,
 		Headers: map[string]string{
 			"Content-Type": "application/json",
-			// NEW: Bulletproof CORS Headers!
+			// cors headers
 			"Access-Control-Allow-Origin":  "*",
 			"Access-Control-Allow-Headers": "Content-Type, Idempotency-Key, X-Admin-Token",
 			"Access-Control-Allow-Methods": "OPTIONS, POST, GET",
@@ -168,7 +168,7 @@ func buildResponse(statusCode int, body map[string]string) (events.APIGatewayV2H
 	}, nil
 }
 
-// NEW: The EMF Magic Trick. Printing this specific JSON shape creates a free graph in AWS.
+// writes a metric to stdout in cloudwatch emf format, so no api call is needed
 func logEMFMetric(metricName string, value int) {
 	timestamp := time.Now().UnixMilli()
 	emf := fmt.Sprintf(`{"_aws":{"Timestamp":%d,"CloudWatchMetrics":[{"Namespace":"FlashCart","Dimensions":[[]],"Metrics":[{"Name":"%s"}]}]},"%s":%d}`, timestamp, metricName, metricName, value)
@@ -189,7 +189,7 @@ func main() {
 	}
 	db = dynamodb.NewFromConfig(cfg)
 
-	// Fetch the admin token once per cold start. If it can't be read, admin calls are rejected.
+	// load the admin token once per cold start. if it can't be read, admin calls get a 401
 	if secretArn := os.Getenv("ADMIN_TOKEN_SECRET_ARN"); secretArn != "" {
 		secret, err := secretsmanager.NewFromConfig(cfg).GetSecretValue(context.TODO(), &secretsmanager.GetSecretValueInput{SecretId: aws.String(secretArn)})
 		if err != nil {

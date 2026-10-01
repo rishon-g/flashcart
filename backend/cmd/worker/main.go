@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt" // <-- NEW
+	"fmt"
 	"math/rand"
 	"os"
 	"time"
@@ -36,7 +36,7 @@ func handler(ctx context.Context, sqsEvent events.SQSEvent) (events.SQSEventResp
 		orderID, productID := parsePipeMessage(message.Body)
 		fmt.Println("RAW MESSAGE:", message.Body)
 		
-		// A message we can't parse will never succeed, so report it and let SQS dead-letter it
+		// a message we can't parse will never succeed, so fail it and let sqs move it to the dlq
 		if orderID == "" || productID == "" {
 			failures = append(failures, events.SQSBatchItemFailure{ItemIdentifier: message.MessageId})
 			continue
@@ -47,13 +47,13 @@ func handler(ctx context.Context, sqsEvent events.SQSEvent) (events.SQSEventResp
 		if paymentFailed {
 			err := refundOrder(ctx, orderID, productID)
 			if isAlreadyProcessed(err) {
-				continue // Redelivered message: the order already left PENDING, so don't refund twice
+				continue // redelivery, the order is no longer pending so don't refund twice
 			}
 			if err != nil {
 				failures = append(failures, events.SQSBatchItemFailure{ItemIdentifier: message.MessageId})
 				continue
 			}
-			// NEW: Emit metric that a payment failed!
+			// count declined payments
 			logEMFMetric("PaymentFailures", 1)
 			continue
 		}
@@ -65,7 +65,7 @@ func handler(ctx context.Context, sqsEvent events.SQSEvent) (events.SQSEventResp
 		if err != nil {
 			failures = append(failures, events.SQSBatchItemFailure{ItemIdentifier: message.MessageId})
 		} else {
-			// NEW: Emit metric that a purchase fully succeeded!
+			// count confirmed orders
 			logEMFMetric("OrdersPlaced", 1)
 		}
 	}
@@ -77,7 +77,7 @@ func confirmOrder(ctx context.Context, orderID string) error {
 		TableName: aws.String(ordersTable),
 		Key:       map[string]types.AttributeValue{"orderId": &types.AttributeValueMemberS{Value: orderID}},
 		UpdateExpression: aws.String("SET #s = :confirmed"),
-		// Only a PENDING order can move to CONFIRMED, so a redelivered message is a no-op
+		// only pending orders can be confirmed, so a redelivered message does nothing
 		ConditionExpression: aws.String("#s = :pending"),
 		ExpressionAttributeNames: map[string]string{"#s": "status"},
 		ExpressionAttributeValues: map[string]types.AttributeValue{
@@ -88,7 +88,7 @@ func confirmOrder(ctx context.Context, orderID string) error {
 	return err
 }
 
-// isAlreadyProcessed reports whether err means the order was no longer PENDING
+// true when the write failed because the order had already left pending
 func isAlreadyProcessed(err error) bool {
 	var ccf *types.ConditionalCheckFailedException
 	if errors.As(err, &ccf) {
@@ -111,7 +111,7 @@ func refundOrder(ctx context.Context, orderID string, productID string) error {
 }
 
 func parsePipeMessage(body string) (string, string) {
-	// Notice we removed the [] brackets! It's just a single struct now.
+	// pipes sends one stream record per message, not an array
 	var payload struct {
 		Dynamodb struct {
 			NewImage struct {
@@ -130,7 +130,7 @@ func parsePipeMessage(body string) (string, string) {
 	return payload.Dynamodb.NewImage.OrderId.S, payload.Dynamodb.NewImage.ProductId.S
 }
 
-// NEW: EMF Metric helper for the worker
+// writes a metric to stdout in cloudwatch emf format
 func logEMFMetric(metricName string, value int) {
 	timestamp := time.Now().UnixMilli()
 	emf := fmt.Sprintf(`{"_aws":{"Timestamp":%d,"CloudWatchMetrics":[{"Namespace":"FlashCart","Dimensions":[[]],"Metrics":[{"Name":"%s"}]}]},"%s":%d}`, timestamp, metricName, metricName, value)

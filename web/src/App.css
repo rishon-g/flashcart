@@ -32,7 +32,7 @@ body {
   padding: 1.5rem 1rem;
 }
 
-/* Sale card: details on the left, live inventory on the right */
+/* sale card: details left, live inventory right */
 .sale {
   display: grid;
   grid-template-columns: 1.1fr 1fr;
@@ -54,7 +54,7 @@ body {
   flex-direction: column;
 }
 
-/* Details */
+/* details */
 .live-badge {
   display: inline-flex;
   align-items: center;
@@ -134,7 +134,7 @@ body {
 .specs dt { color: var(--text-muted); }
 .specs dd { margin: 0; font-weight: 600; }
 
-/* Live inventory (the focal point) */
+/* live inventory */
 .stock-head {
   display: flex;
   justify-content: space-between;
@@ -236,7 +236,7 @@ body {
 .message.success { color: var(--success); }
 .message.error { color: var(--danger); }
 
-/* Admin */
+/* admin */
 .admin-bar {
   grid-column: 1 / -1;
   display: flex;

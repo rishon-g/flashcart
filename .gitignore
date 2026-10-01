@@ -1,13 +1,13 @@
-# Go binaries
+# go binaries
 bootstrap
 flashcart-binary
 *.exe
 
-# Node/CDK
+# node / cdk
 node_modules/
 cdk.out/
 dist/
 
-# Environment variables
+# environment variables
 .env
 
