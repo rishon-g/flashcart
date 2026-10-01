@@ -39,7 +39,7 @@ func handler(ctx context.Context, sqsEvent events.SQSEvent) (events.SQSEventResp
 			continue
 		}
 
-		paymentFailed := rand.Float32() < 0.20
+		paymentFailed := false
 
 		if paymentFailed {
 			// NEW: Emit metric that a payment failed!
