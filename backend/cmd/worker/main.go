@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt" // <-- NEW
 	"math/rand"
 	"os"
@@ -35,23 +36,32 @@ func handler(ctx context.Context, sqsEvent events.SQSEvent) (events.SQSEventResp
 		orderID, productID := parsePipeMessage(message.Body)
 		fmt.Println("RAW MESSAGE:", message.Body)
 		
-		if orderID == "" {
+		// A message we can't parse will never succeed, so report it and let SQS dead-letter it
+		if orderID == "" || productID == "" {
+			failures = append(failures, events.SQSBatchItemFailure{ItemIdentifier: message.MessageId})
 			continue
 		}
 
-		paymentFailed := false
+		paymentFailed := rand.Float32() < 0.20
 
 		if paymentFailed {
-			// NEW: Emit metric that a payment failed!
-			logEMFMetric("PaymentFailures", 1)
 			err := refundOrder(ctx, orderID, productID)
+			if isAlreadyProcessed(err) {
+				continue // Redelivered message: the order already left PENDING, so don't refund twice
+			}
 			if err != nil {
 				failures = append(failures, events.SQSBatchItemFailure{ItemIdentifier: message.MessageId})
+				continue
 			}
+			// NEW: Emit metric that a payment failed!
+			logEMFMetric("PaymentFailures", 1)
 			continue
 		}
 
 		err := confirmOrder(ctx, orderID)
+		if isAlreadyProcessed(err) {
+			continue
+		}
 		if err != nil {
 			failures = append(failures, events.SQSBatchItemFailure{ItemIdentifier: message.MessageId})
 		} else {
@@ -67,15 +77,31 @@ func confirmOrder(ctx context.Context, orderID string) error {
 		TableName: aws.String(ordersTable),
 		Key:       map[string]types.AttributeValue{"orderId": &types.AttributeValueMemberS{Value: orderID}},
 		UpdateExpression: aws.String("SET #s = :confirmed"),
+		// Only a PENDING order can move to CONFIRMED, so a redelivered message is a no-op
+		ConditionExpression: aws.String("#s = :pending"),
 		ExpressionAttributeNames: map[string]string{"#s": "status"},
-		ExpressionAttributeValues: map[string]types.AttributeValue{":confirmed": &types.AttributeValueMemberS{Value: "CONFIRMED"}},
+		ExpressionAttributeValues: map[string]types.AttributeValue{
+			":confirmed": &types.AttributeValueMemberS{Value: "CONFIRMED"},
+			":pending":   &types.AttributeValueMemberS{Value: "PENDING"},
+		},
 	})
 	return err
 }
 
+// isAlreadyProcessed reports whether err means the order was no longer PENDING
+func isAlreadyProcessed(err error) bool {
+	var ccf *types.ConditionalCheckFailedException
+	if errors.As(err, &ccf) {
+		return true
+	}
+	var tce *types.TransactionCanceledException
+	return errors.As(err, &tce) && len(tce.CancellationReasons) > 0 &&
+		aws.ToString(tce.CancellationReasons[0].Code) == "ConditionalCheckFailed"
+}
+
 func refundOrder(ctx context.Context, orderID string, productID string) error {
 	updateOrderOp := &types.TransactWriteItem{
-		Update: &types.Update{TableName: aws.String(ordersTable), Key: map[string]types.AttributeValue{"orderId": &types.AttributeValueMemberS{Value: orderID}}, UpdateExpression: aws.String("SET #s = :failed"), ExpressionAttributeNames: map[string]string{"#s": "status"}, ExpressionAttributeValues: map[string]types.AttributeValue{":failed": &types.AttributeValueMemberS{Value: "FAILED"}}},
+		Update: &types.Update{TableName: aws.String(ordersTable), Key: map[string]types.AttributeValue{"orderId": &types.AttributeValueMemberS{Value: orderID}}, UpdateExpression: aws.String("SET #s = :failed"), ConditionExpression: aws.String("#s = :pending"), ExpressionAttributeNames: map[string]string{"#s": "status"}, ExpressionAttributeValues: map[string]types.AttributeValue{":failed": &types.AttributeValueMemberS{Value: "FAILED"}, ":pending": &types.AttributeValueMemberS{Value: "PENDING"}}},
 	}
 	updateStockOp := &types.TransactWriteItem{
 		Update: &types.Update{TableName: aws.String(productsTable), Key: map[string]types.AttributeValue{"productId": &types.AttributeValueMemberS{Value: productID}}, UpdateExpression: aws.String("SET stock = stock + :qty"), ExpressionAttributeValues: map[string]types.AttributeValue{":qty": &types.AttributeValueMemberN{Value: "1"}}},
