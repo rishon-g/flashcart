@@ -1,38 +1,117 @@
-# FlashCart: Serverless Flash-Sale Checkout Platform
+# FlashCart
 
-FlashCart is an event-driven, serverless e-commerce backend built to handle massive, concurrent traffic spikes (like a Black Friday flash sale) without overselling inventory or double-charging customers. 
+**A serverless checkout backend for flash sales that never oversells and never double-charges.**
+
+![Go](https://img.shields.io/badge/Go-00ADD8?logo=go&logoColor=white)
+![AWS Lambda](https://img.shields.io/badge/AWS_Lambda-FF9900?logo=awslambda&logoColor=white)
+![DynamoDB](https://img.shields.io/badge/DynamoDB-4053D6?logo=amazondynamodb&logoColor=white)
+![AWS CDK](https://img.shields.io/badge/AWS_CDK-232F3E?logo=amazonwebservices&logoColor=white)
+![React](https://img.shields.io/badge/React-20232A?logo=react&logoColor=61DAFB)
+![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white)
 
 https://github.com/user-attachments/assets/cd0d3ee8-b07c-4732-ad13-b512206da8d0
 
-## The Architecture
+FlashCart is an event-driven backend built entirely on AWS managed services, defined with AWS CDK, with business logic in strictly typed Go. It is designed for traffic spikes like a Black Friday drop, where thousands of buyers compete for a limited number of units.
 
-This project is built purely on **AWS Managed Services** using **Infrastructure as Code (AWS CDK)**, with the business logic written in strictly-typed **Go**.
+**Load-test results at a glance**
 
-1. **Frontend:** A React/Vite dashboard hosted on Amazon S3 and distributed globally via CloudFront.
-2. **API (Synchronous):** Amazon API Gateway routes traffic to a Go Lambda function.
-3. **Database:** DynamoDB stores inventory and orders.
-4. **The Outbox Pipeline (Asynchronous):** DynamoDB Streams capture new orders and route them through EventBridge Pipes into an SQS Queue.
-5. **Background Worker:** A second Go Lambda function pulls from SQS to process payments, executing compensating transactions on failure and routing poison pills to a Dead-Letter Queue (DLQ).
+- **6,920 requests per second** at peak, with 1,000 concurrent users
+- **132 ms** average API latency (p95: 194 ms)
+- **0 oversold units** and **0 duplicate charges**, verified by a post-test audit of the database
 
-## Core Engineering Concepts Implemented
+## Architecture
 
-*   **Concurrency & Oversell Protection:** Utilized DynamoDB Conditional Writes (`stock >= :qty`) to implement optimistic locking.
-*   **Idempotency:** Prevented double-charges during network retries by enforcing `attribute_not_exists(orderId)`.
-*   **Transactional Outbox Pattern:** Eliminated the dual-write problem. The API only writes to DynamoDB; AWS internal infrastructure (Streams + Pipes) guarantees delivery to the SQS fulfillment queue.
-*   **Self-Healing & Compensation:** The background worker simulates third-party payment processing. If a payment declines, a Compensating Transaction safely restores the item to the database inventory.
-*   **Observability:** Integrated AWS CloudWatch Embedded Metric Format (EMF) to generate real-time zero-latency custom graphs for Orders Placed, Payment Failures, and Sold Out Rejections.
-*   **CI/CD & Security:** Fully automated deployments via GitHub Actions, authenticated securely to AWS using **OpenID Connect (OIDC)** (no long-lived IAM access keys).
+```mermaid
+flowchart LR
+    user([Customer]) -->|loads app| web["CloudFront + S3<br/>React dashboard"]
+    user -->|REST calls| apigw[API Gateway]
+    apigw --> api["API Lambda<br/>(Go)"]
+    api -->|conditional writes| db[("DynamoDB<br/>inventory + orders")]
+    db -->|Streams| pipe[EventBridge Pipes]
+    pipe --> queue[["SQS queue"]]
+    queue --> worker["Worker Lambda<br/>(Go)"]
+    worker -->|"restore stock on decline"| db
+    queue -.->|poison pills| dlq[["Dead-letter queue"]]
+```
 
-## Load Testing Benchmarks
+| Layer | Service | Role |
+| --- | --- | --- |
+| Frontend | S3 + CloudFront | Hosts the React/Vite dashboard and serves it globally |
+| Synchronous API | API Gateway + Go Lambda | Accepts orders and reports live inventory |
+| Database | DynamoDB | Stores inventory and orders |
+| Outbox pipeline | DynamoDB Streams + EventBridge Pipes + SQS | Delivers every new order to fulfillment without the API touching the queue |
+| Background worker | Go Lambda | Processes payments, compensates on failure, and sends poison pills to the DLQ |
 
-I load-tested the API using **k6** to simulate a flash sale traffic spike of 1,000 concurrent users. 
+### How a purchase flows
 
-*   **Throughput:** Survived a peak of **6,920 requests per second**.
-*   **API Latency:** Optimized Lambda memory allocation to vertically scale CPU, achieving an average response time of **132ms** (p95: 194ms) under extreme load.
-*   **Data Integrity:** A custom Go auditing script verified the database invariants post-test. Out of 145,000+ total requests, exactly 510 unique orders were processed. 418 succeeded, 85 payments were declined (and inventory safely restored), resulting in exactly **0 oversold units and 0 duplicate charges.**
+1. The customer clicks **Buy now**. The dashboard sends `POST /orders` with an `Idempotency-Key` header.
+2. The API Lambda decrements stock with a conditional write (`stock >= :qty`) and records the order, guarded by `attribute_not_exists(orderId)`. If stock is gone, the API returns `409`.
+3. DynamoDB Streams captures the new order. EventBridge Pipes forwards it to the SQS fulfillment queue.
+4. The worker Lambda pulls the message and processes the (simulated) payment.
+5. If the payment is declined, a compensating transaction returns the unit to inventory. Messages that keep failing land in the dead-letter queue.
 
-## Tech Stack
-*   **Backend:** Go (Golang), AWS Lambda, API Gateway
-*   **Database & Queues:** DynamoDB, SQS, EventBridge Pipes
-*   **Infrastructure:** AWS CDK (TypeScript), GitHub Actions
-*   **Frontend:** React, TypeScript, Vite, TanStack Query, Axios
+## Engineering concepts
+
+| Problem | Solution | How it works |
+| --- | --- | --- |
+| Overselling under concurrency | Optimistic locking | DynamoDB conditional writes (`stock >= :qty`) reject any order that would take stock below zero |
+| Double charges on retries | Idempotency | `attribute_not_exists(orderId)` ensures a retried request cannot create a second order |
+| Dual-write inconsistency | Transactional outbox | The API writes only to DynamoDB. Streams and Pipes guarantee delivery to SQS, so the database and queue cannot drift apart |
+| Failed payments | Compensating transaction | The worker restores the item to inventory when a payment declines |
+| Poison messages | Dead-letter queue | Messages that repeatedly fail are isolated instead of blocking the queue |
+| Blind spots in production | Embedded Metric Format | Orders Placed, Payment Failures, and Sold Out Rejections are emitted as structured logs, so custom CloudWatch graphs need no extra API calls on the request path |
+| Credential leaks | OIDC deployments | GitHub Actions authenticates to AWS through OpenID Connect, so no long-lived IAM access keys exist |
+
+## API
+
+| Method | Path | Description |
+| --- | --- | --- |
+| `GET` | `/products/{id}` | Returns the current stock for a product, for example `FLASH-TV-001`. The dashboard polls it every second. |
+| `POST` | `/orders` | Places an order. Requires an `Idempotency-Key` header, and repeating a request with the same key will not create a second order. Returns `409` when sold out. |
+| `POST` | `/admin/products` | Restocks inventory to 500 units of `FLASH-TV-001`. |
+
+## Load testing
+
+I load-tested the API with [k6](https://k6.io), simulating a flash-sale spike of 1,000 concurrent users. Lambda memory was tuned upward because it also scales CPU, which brought latency down under load.
+
+| Metric | Result |
+| --- | --- |
+| Concurrent users | 1,000 |
+| Peak throughput | 6,920 requests/s |
+| Average latency | 132 ms |
+| p95 latency | 194 ms |
+| Total requests | 145,000+ |
+| Unique orders processed | 510 |
+| Successful orders | 418 |
+| Declined payments (inventory restored) | 85 |
+| **Oversold units** | **0** |
+| **Duplicate charges** | **0** |
+
+A custom Go auditing script checked the database invariants after the run, confirming that inventory and orders matched exactly.
+
+## Tech stack
+
+| Area | Technologies |
+| --- | --- |
+| Backend | Go, AWS Lambda, API Gateway |
+| Data and messaging | DynamoDB, DynamoDB Streams, EventBridge Pipes, SQS |
+| Infrastructure | AWS CDK (TypeScript), GitHub Actions |
+| Frontend | React, TypeScript, Vite, TanStack Query, Axios |
+| Testing | k6, custom Go audit script |
+
+## Getting started
+
+**Prerequisites:** an AWS account with credentials configured, Node.js, Go, and the AWS CDK CLI.
+
+```bash
+# 1. Deploy the infrastructure (run from the CDK app directory)
+npm install
+npx cdk bootstrap   # first deploy only
+npx cdk deploy
+
+# 2. Run the dashboard locally (run from the frontend directory)
+npm install
+npm run dev
+```
+
+Then set `API_URL` in `App.tsx` to the API Gateway URL printed by the deploy, open the dashboard, and click **Reset warehouse** to load 500 units.
