@@ -11,7 +11,36 @@ permissions:
   contents: read
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    # DynamoDB Local for the concurrent oversell test (the image runs in-memory by default)
+    services:
+      dynamodb:
+        image: amazon/dynamodb-local
+        ports:
+          - 8000:8000
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+
+      - name: Setup Node (for CDK)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Go vet and test
+        run: cd backend && go vet ./... && go test ./... -v
+
+      - name: CDK tests
+        run: cd infra && npm ci && npm test
+
   deploy:
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
@@ -20,7 +49,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.21'
+          go-version-file: backend/go.mod
 
       - name: Setup Node (for CDK)
         uses: actions/setup-node@v4
