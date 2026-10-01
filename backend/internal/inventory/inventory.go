@@ -9,34 +9,33 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 )
 
-// We define what an Order looks like
+// an order for a single product
 type Order struct {
 	OrderID   string
 	ProductID string
 	Qty       int
 }
 
-// Reserve atomically decrements stock and creates an order
+// takes stock and creates the order in one transaction
 func Reserve(ctx context.Context, db *dynamodb.Client, productsTable string, ordersTable string, order Order) error {
 
-	// 1. OPERATION ONE: Update the Product Stock
+	// take one unit off the stock
 	updateStockOp := &types.TransactWriteItem{
 		Update: &types.Update{
 			TableName: aws.String(productsTable),
 			Key: map[string]types.AttributeValue{
 				"productId": &types.AttributeValueMemberS{Value: order.ProductID},
 			},
-			// The Math: set stock = stock - qty
 			UpdateExpression: aws.String("SET stock = stock - :qty"),
-			// THE RULE: Only do this if stock >= qty (Prevents Overselling!)
+			// fails if there isn't enough stock, which is what stops overselling
 			ConditionExpression: aws.String("stock >= :qty"),
 			ExpressionAttributeValues: map[string]types.AttributeValue{
-				":qty": &types.AttributeValueMemberN{Value: "1"}, // We are assuming 1 item per order for now
+				":qty": &types.AttributeValueMemberN{Value: "1"}, // always 1 unit per order for now
 			},
 		},
 	}
 
-	// 2. OPERATION TWO: Insert the Order Record
+	// create the order
 	insertOrderOp := &types.TransactWriteItem{
 		Put: &types.Put{
 			TableName: aws.String(ordersTable),
@@ -46,13 +45,12 @@ func Reserve(ctx context.Context, db *dynamodb.Client, productsTable string, ord
 				"status":    &types.AttributeValueMemberS{Value: "PENDING"},
 				"createdAt": &types.AttributeValueMemberS{Value: time.Now().UTC().Format(time.RFC3339)},
 			},
-			// THE RULE: Only save this if orderId doesn't exist yet (Prevents Double Charges!)
+			// fails if this idempotency key was already used
 			ConditionExpression: aws.String("attribute_not_exists(orderId)"),
 		},
 	}
 
-	// 3. EXECUTE THE TRANSACTION
-	// Send both operations to DynamoDB. They both succeed, or they both fail together.
+	// both writes succeed or neither does
 	_, err := db.TransactWriteItems(ctx, &dynamodb.TransactWriteItemsInput{
 		TransactItems: []types.TransactWriteItem{
 			*updateStockOp,

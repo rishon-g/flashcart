@@ -4,9 +4,9 @@ import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as apigwv2 from 'aws-cdk-lib/aws-apigatewayv2';
 import { HttpLambdaIntegration } from 'aws-cdk-lib/aws-apigatewayv2-integrations';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
-import * as sqs from 'aws-cdk-lib/aws-sqs'; // <-- NEW: Import SQS (Queues)
-import * as pipes from 'aws-cdk-lib/aws-pipes'; // <-- NEW: Import Pipes
-import * as iam from 'aws-cdk-lib/aws-iam'; // <-- NEW: Import Security Roles
+import * as sqs from 'aws-cdk-lib/aws-sqs';
+import * as pipes from 'aws-cdk-lib/aws-pipes';
+import * as iam from 'aws-cdk-lib/aws-iam';
 import { SqsEventSource } from 'aws-cdk-lib/aws-lambda-event-sources';
 import * as cloudwatch from 'aws-cdk-lib/aws-cloudwatch';
 import * as cloudwatchActions from 'aws-cdk-lib/aws-cloudwatch-actions';
@@ -25,9 +25,7 @@ export class InfraStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
 
-    // =====================================================================
-    // 1. DATABASE
-    // =====================================================================
+    // database
     const productsTable = new dynamodb.Table(this, 'ProductsTable', {
       partitionKey: { name: 'productId', type: dynamodb.AttributeType.STRING },
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
@@ -39,21 +37,19 @@ export class InfraStack extends cdk.Stack {
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
       removalPolicy: cdk.RemovalPolicy.DESTROY,
       
-      // NEW: Turn on the "Security Camera" to watch for new orders!
+      // stream new orders for the outbox
       stream: dynamodb.StreamViewType.NEW_IMAGE, 
     });
 
-     // =====================================================================
-    // 2. THE OUTBOX QUEUE & DEAD-LETTER QUEUE
-    // =====================================================================
+    // outbox queue and dead-letter queue
     
-    // NEW: The Dead-Letter Queue. If a message fails 3 times, it goes here!
+    // messages land here after 3 failed receives
     const deadLetterQueue = new sqs.Queue(this, 'OrderDLQ');
 
     const fulfillmentQueue = new sqs.Queue(this, 'FulfillmentQueue', {
       deadLetterQueue: {
         queue: deadLetterQueue,
-        maxReceiveCount: 3, // Retry 3 times before giving up
+        maxReceiveCount: 3,
       }
     });
 
@@ -68,7 +64,7 @@ export class InfraStack extends cdk.Stack {
       roleArn: pipeRole.roleArn,
       source: ordersTable.tableStreamArn!,
       sourceParameters: {
-        // NEW: The Filter! Only grab brand new orders, ignore updates!
+        // only forward inserts, not the worker's status updates
         filterCriteria: {
           filters: [{ pattern: '{ "eventName": ["INSERT"] }' }]
         },
@@ -80,17 +76,15 @@ export class InfraStack extends cdk.Stack {
       target: fulfillmentQueue.queueArn,
     });
 
-    // =====================================================================
-    // 3. COMPUTE (API & WORKER)
-    // =====================================================================
+    // compute
     
-    // Shared secret that guards POST /admin/products
+    // shared secret for the admin restock endpoint
     const adminTokenSecret = new secretsmanager.Secret(this, 'AdminTokenSecret', {
       description: 'Value for the X-Admin-Token header on POST /admin/products',
       generateSecretString: { excludePunctuation: true, passwordLength: 32 },
     });
 
-    // The original API (Hostess)
+    // api
     const apiLambda = new lambda.Function(this, 'FlashCartApiLambda', {
       runtime: lambda.Runtime.PROVIDED_AL2023,
       architecture: lambda.Architecture.ARM_64,
@@ -101,11 +95,11 @@ export class InfraStack extends cdk.Stack {
         ORDERS_TABLE: ordersTable.tableName,
         ADMIN_TOKEN_SECRET_ARN: adminTokenSecret.secretArn,
       },
-      memorySize: 1024, // we give it a memory boost
+      memorySize: 1024, // more memory also means more cpu
     });
     adminTokenSecret.grantRead(apiLambda);
 
-    // NEW: The Worker (Shipping Department)
+    // fulfillment worker
     const workerLambda = new lambda.Function(this, 'FlashCartWorkerLambda', {
       runtime: lambda.Runtime.PROVIDED_AL2023,
       architecture: lambda.Architecture.ARM_64,
@@ -120,36 +114,32 @@ export class InfraStack extends cdk.Stack {
     productsTable.grantReadWriteData(workerLambda);
     ordersTable.grantReadWriteData(workerLambda);
 
-    // NEW: Plug the SQS Queue into the Worker Lambda!
+    // worker reads from the fulfillment queue
     workerLambda.addEventSource(new SqsEventSource(fulfillmentQueue, {
-      reportBatchItemFailures: true, // Let Go tell AWS exactly which message failed
+      reportBatchItemFailures: true, // retry only the failed messages in a batch
     }));
 
-    // =====================================================================
-    // 4. API GATEWAY
-    // =====================================================================
+    // api gateway
     const lambdaIntegration = new HttpLambdaIntegration('ApiIntegration', apiLambda);
     const httpApi = new apigwv2.HttpApi(this, 'FlashCartHttpApi', { 
       apiName: 'FlashCart API',
-      // NEW: Fix CORS so our React app is legally allowed to talk to the API!
+      // let the dashboard call the api from the browser
       corsPreflight: {
-        allowOrigins: ['*'], // Allow any website to connect
+        allowOrigins: ['*'],
         allowMethods: [apigwv2.CorsHttpMethod.ANY],
         allowHeaders: ['*'],
       },
     });
     httpApi.addRoutes({ path: '/{proxy+}', integration: lambdaIntegration });
 
-    // =====================================================================
-    // 5. OBSERVABILITY (Dashboards & Alarms)
-    // =====================================================================
+    // observability
     
-    // 1. Create the Dashboard Board
+    // cloudwatch dashboard
     const dashboard = new cloudwatch.Dashboard(this, 'FlashCartDashboard', {
       dashboardName: 'FlashCart-Live-Metrics',
     });
 
-    // 2. Graph: API Latency (How fast is our Hostess?)
+    // api latency
     const latencyWidget = new cloudwatch.GraphWidget({
       title: 'API Latency (p50 & p99)',
       left: [
@@ -158,7 +148,7 @@ export class InfraStack extends cdk.Stack {
       ]
     });
 
-    // 3. Graph: The EMF Metrics we just created in Go!
+    // custom metrics from the lambdas
     const customMetricsWidget = new cloudwatch.GraphWidget({
       title: 'Sales & Failures',
       left: [
@@ -168,17 +158,16 @@ export class InfraStack extends cdk.Stack {
       ]
     });
 
-    // 4. Graph: Dead Letter Queue Size
+    // dlq depth
     const dlqWidget = new cloudwatch.GraphWidget({
       title: 'Dead Letter Queue (Poison Pills)',
       left: [ deadLetterQueue.metricApproximateNumberOfMessagesVisible() ]
     });
 
-    // Add the graphs to the board!
     dashboard.addWidgets(latencyWidget, customMetricsWidget, dlqWidget);
 
-    // 5. ALARM: If a message hits the Dead Letter Queue, sound the alarm!
-    // Alarms publish to this topic. Pass -c alertEmail=you@example.com to subscribe an inbox.
+    // alarm as soon as anything lands in the dlq
+    // pass -c alertEmail=you@example.com to get it by email
     const alarmTopic = new sns.Topic(this, 'AlarmTopic');
     const alertEmail = this.node.tryGetContext('alertEmail');
     if (alertEmail) {
@@ -187,23 +176,21 @@ export class InfraStack extends cdk.Stack {
 
     const dlqAlarm = new cloudwatch.Alarm(this, 'DLQAlarm', {
       metric: deadLetterQueue.metricApproximateNumberOfMessagesVisible(),
-      threshold: 1,      // If we get even ONE message stuck...
-      evaluationPeriods: 1, // ...trigger the alarm immediately.
+      threshold: 1,
+      evaluationPeriods: 1,
       comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
     });
     dlqAlarm.addAlarmAction(new cloudwatchActions.SnsAction(alarmTopic));
 
-    // =====================================================================
-    // 6. CI/CD SECURITY (OIDC)
-    // =====================================================================
+    // ci/cd (github oidc)
     
-    // 1. Tell AWS to trust GitHub's authentication system
+    // trust github's oidc provider
     const githubProvider = new iam.OpenIdConnectProvider(this, 'GithubOIDCProvider', {
       url: 'https://token.actions.githubusercontent.com',
       clientIds: ['sts.amazonaws.com'],
     });
 
-    // 2. Create a Role (a temporary keycard) that GitHub can assume
+    // role for the deploy workflow, limited to main on this repo
     const githubRole = new iam.Role(this, 'GitHubDeployRole', {
   assumedBy: new iam.WebIdentityPrincipal(githubProvider.openIdConnectProviderArn, {
     StringEquals: {
@@ -216,17 +203,15 @@ export class InfraStack extends cdk.Stack {
   description: 'Role assumed by GitHub Actions to deploy the CDK app',
 });
 
-// =====================================================================
-    // 7. FRONTEND HOSTING (S3 & CloudFront)
-    // =====================================================================
+    // frontend hosting
     
-    // 1. Create a secure hard drive (S3) to hold the React HTML/JS files
+    // bucket for the built dashboard
     const websiteBucket = new s3.Bucket(this, 'FlashCartWebsiteBucket', {
       removalPolicy: cdk.RemovalPolicy.DESTROY,
       autoDeleteObjects: true,
     });
 
-    // 2. Create the CDN (CloudFront) to serve the website globally over HTTPS
+    // cloudfront in front of the bucket, https only
     const distribution = new cloudfront.Distribution(this, 'FlashCartDistribution', {
       defaultBehavior: {
         origin: new origins.S3Origin(websiteBucket),
@@ -235,25 +220,24 @@ export class InfraStack extends cdk.Stack {
       defaultRootObject: 'index.html',
     });
 
-    // 3. Tell CDK to automatically upload our React files into the bucket!
+    // upload web/dist on every deploy
     new s3deploy.BucketDeployment(this, 'DeployWebsite', {
       sources: [s3deploy.Source.asset(path.join(__dirname, '../../web/dist'))],
       destinationBucket: websiteBucket,
       distribution,
-      distributionPaths: ['/*'], // Tell the CDN to refresh instantly
+      distributionPaths: ['/*'], // invalidate the cache on each deploy
     });
 
-    // Output the final public Website URL!
     new cdk.CfnOutput(this, 'WebsiteUrl', { value: distribution.distributionDomainName });
 
-    // 3. Least privilege: the pipeline may only assume the CDK bootstrap roles,
-    //    which do the actual asset publishing and CloudFormation deploys
+    // the deploy role can only assume the cdk bootstrap roles,
+    // which do the actual publishing and deploys
     githubRole.addToPolicy(new iam.PolicyStatement({
       actions: ['sts:AssumeRole'],
       resources: [`arn:${cdk.Aws.PARTITION}:iam::${cdk.Aws.ACCOUNT_ID}:role/cdk-*`],
     }));
 
-    // 4. Print the physical Role ID to the terminal so we can copy it to GitHub!
+    // arn to paste into deploy.yml
     new cdk.CfnOutput(this, 'GitHubRoleArn', { value: githubRole.roleArn });
 
     new cdk.CfnOutput(this, 'ApiUrl', { value: httpApi.apiEndpoint });

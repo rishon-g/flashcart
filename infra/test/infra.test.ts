@@ -7,7 +7,7 @@ import { InfraStack } from '../lib/infra-stack';
 let template: Template;
 
 beforeAll(() => {
-  // The stack bundles web/dist; create an empty one so synth works before the frontend is built
+  // the stack bundles web/dist, so make an empty one if the frontend isn't built yet
   fs.mkdirSync(path.join(__dirname, '../../web/dist'), { recursive: true });
 
   const app = new cdk.App();

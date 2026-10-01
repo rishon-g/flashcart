@@ -15,7 +15,7 @@ import (
 	sqstypes "github.com/aws/aws-sdk-go-v2/service/sqs/types"
 )
 
-// Must match the stock that POST /admin/products seeds
+// must match what the admin endpoint seeds
 const initialStock = 500
 
 func fail(format string, args ...any) {
@@ -34,7 +34,7 @@ func main() {
 
 	fmt.Println("Auditing FlashCart Database...")
 
-	// 1. Auto-discover the Table and Queue names
+	// find the tables and dlq by name
 	productsTable, ordersTable := "", ""
 	tablePages := dynamodb.NewListTablesPaginator(dbClient, &dynamodb.ListTablesInput{})
 	for tablePages.HasMorePages() {
@@ -57,7 +57,7 @@ func main() {
 	}
 	dlqUrl := queues.QueueUrls[0]
 
-	// 2. Scan every page of the Orders table and count orders by status
+	// count orders by status
 	confirmed, failed, pending, other := 0, 0, 0, 0
 	orderPages := dynamodb.NewScanPaginator(dbClient, &dynamodb.ScanInput{TableName: &ordersTable})
 	for orderPages.HasMorePages() {
@@ -82,7 +82,7 @@ func main() {
 		}
 	}
 
-	// 3. Get the final TV stock
+	// remaining stock
 	product, err := dbClient.GetItem(ctx, &dynamodb.GetItemInput{
 		TableName: &productsTable,
 		Key: map[string]types.AttributeValue{"productId": &types.AttributeValueMemberS{Value: "FLASH-TV-001"}},
@@ -99,7 +99,7 @@ func main() {
 		fail("parsing stock %q: %v", stockAttr.Value, err)
 	}
 
-	// 4. Read the real DLQ depth (visible + in flight)
+	// dlq depth, visible plus in flight
 	attrs, err := sqsClient.GetQueueAttributes(ctx, &sqs.GetQueueAttributesInput{
 		QueueUrl: &dlqUrl,
 		AttributeNames: []sqstypes.QueueAttributeName{
@@ -126,7 +126,7 @@ func main() {
 	fmt.Printf("Remaining TV Stock:            %d\n", stock)
 	fmt.Printf("Dead Letter Queue depth:       %d\n", dlqDepth)
 
-	// 5. Check the invariants. Declined orders return their unit, so only CONFIRMED and PENDING hold stock.
+	// declined orders give their unit back, so only confirmed and pending orders hold stock
 	expected := initialStock - confirmed - pending
 	fmt.Println("\nINVARIANT CHECKS:")
 	ok = true
