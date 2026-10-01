@@ -9,6 +9,10 @@ import * as pipes from 'aws-cdk-lib/aws-pipes'; // <-- NEW: Import Pipes
 import * as iam from 'aws-cdk-lib/aws-iam'; // <-- NEW: Import Security Roles
 import { SqsEventSource } from 'aws-cdk-lib/aws-lambda-event-sources';
 import * as cloudwatch from 'aws-cdk-lib/aws-cloudwatch';
+import * as cloudwatchActions from 'aws-cdk-lib/aws-cloudwatch-actions';
+import * as sns from 'aws-cdk-lib/aws-sns';
+import * as subscriptions from 'aws-cdk-lib/aws-sns-subscriptions';
+import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import * as path from 'path';
 
 
@@ -80,15 +84,26 @@ export class InfraStack extends cdk.Stack {
     // 3. COMPUTE (API & WORKER)
     // =====================================================================
     
+    // Shared secret that guards POST /admin/products
+    const adminTokenSecret = new secretsmanager.Secret(this, 'AdminTokenSecret', {
+      description: 'Value for the X-Admin-Token header on POST /admin/products',
+      generateSecretString: { excludePunctuation: true, passwordLength: 32 },
+    });
+
     // The original API (Hostess)
     const apiLambda = new lambda.Function(this, 'FlashCartApiLambda', {
       runtime: lambda.Runtime.PROVIDED_AL2023,
       architecture: lambda.Architecture.ARM_64,
       handler: 'bootstrap',
       code: lambda.Code.fromAsset(path.join(__dirname, '../../backend/cmd/api')),
-      environment: { PRODUCTS_TABLE: productsTable.tableName, ORDERS_TABLE: ordersTable.tableName },
+      environment: {
+        PRODUCTS_TABLE: productsTable.tableName,
+        ORDERS_TABLE: ordersTable.tableName,
+        ADMIN_TOKEN_SECRET_ARN: adminTokenSecret.secretArn,
+      },
       memorySize: 1024, // we give it a memory boost
     });
+    adminTokenSecret.grantRead(apiLambda);
 
     // NEW: The Worker (Shipping Department)
     const workerLambda = new lambda.Function(this, 'FlashCartWorkerLambda', {
@@ -163,12 +178,20 @@ export class InfraStack extends cdk.Stack {
     dashboard.addWidgets(latencyWidget, customMetricsWidget, dlqWidget);
 
     // 5. ALARM: If a message hits the Dead Letter Queue, sound the alarm!
-    new cloudwatch.Alarm(this, 'DLQAlarm', {
+    // Alarms publish to this topic. Pass -c alertEmail=you@example.com to subscribe an inbox.
+    const alarmTopic = new sns.Topic(this, 'AlarmTopic');
+    const alertEmail = this.node.tryGetContext('alertEmail');
+    if (alertEmail) {
+      alarmTopic.addSubscription(new subscriptions.EmailSubscription(alertEmail));
+    }
+
+    const dlqAlarm = new cloudwatch.Alarm(this, 'DLQAlarm', {
       metric: deadLetterQueue.metricApproximateNumberOfMessagesVisible(),
       threshold: 1,      // If we get even ONE message stuck...
       evaluationPeriods: 1, // ...trigger the alarm immediately.
       comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
     });
+    dlqAlarm.addAlarmAction(new cloudwatchActions.SnsAction(alarmTopic));
 
     // =====================================================================
     // 6. CI/CD SECURITY (OIDC)
@@ -223,12 +246,18 @@ export class InfraStack extends cdk.Stack {
     // Output the final public Website URL!
     new cdk.CfnOutput(this, 'WebsiteUrl', { value: distribution.distributionDomainName });
 
-    // 3. Give this role permission to build AWS infrastructure (Admin access for the pipeline)
-    githubRole.addManagedPolicy(iam.ManagedPolicy.fromAwsManagedPolicyName('AdministratorAccess'));
+    // 3. Least privilege: the pipeline may only assume the CDK bootstrap roles,
+    //    which do the actual asset publishing and CloudFormation deploys
+    githubRole.addToPolicy(new iam.PolicyStatement({
+      actions: ['sts:AssumeRole'],
+      resources: [`arn:${cdk.Aws.PARTITION}:iam::${cdk.Aws.ACCOUNT_ID}:role/cdk-*`],
+    }));
 
     // 4. Print the physical Role ID to the terminal so we can copy it to GitHub!
     new cdk.CfnOutput(this, 'GitHubRoleArn', { value: githubRole.roleArn });
 
     new cdk.CfnOutput(this, 'ApiUrl', { value: httpApi.apiEndpoint });
+    new cdk.CfnOutput(this, 'AdminTokenSecretArn', { value: adminTokenSecret.secretArn });
+    new cdk.CfnOutput(this, 'AlarmTopicArn', { value: alarmTopic.topicArn });
   }
 }
