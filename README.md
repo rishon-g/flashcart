@@ -1,7 +1,8 @@
 # FlashCart
 
-**A serverless checkout backend for flash sales, built so a sale can't oversell and a retried request can't create a second order.**
+**A serverless flash-sale checkout on AWS that holds 1,000 concurrent buyers to exactly the stock that exists: no overselling, and no duplicate orders from retries.**
 
+[![Deploy](https://github.com/rishon-g/flashcart/actions/workflows/deploy.yml/badge.svg)](https://github.com/rishon-g/flashcart/actions/workflows/deploy.yml)
 ![Go](https://img.shields.io/badge/Go-00ADD8?logo=go&logoColor=white)
 ![AWS Lambda](https://img.shields.io/badge/AWS_Lambda-FF9900?logo=awslambda&logoColor=white)
 ![DynamoDB](https://img.shields.io/badge/DynamoDB-4053D6?logo=amazondynamodb&logoColor=white)
@@ -11,13 +12,25 @@
 
 https://github.com/user-attachments/assets/cd0d3ee8-b07c-4732-ad13-b512206da8d0
 
-FlashCart is an event-driven backend built on AWS managed services and defined with AWS CDK. The business logic is in Go. It is designed for traffic spikes like a Black Friday drop, where thousands of buyers compete for a limited number of units of one product (`FLASH-TV-001`, 500 units).
+In a flash sale, thousands of buyers race for a few hundred units in a few seconds. A naive checkout oversells, double-charges people whose requests are retried, and loses orders when one step fails partway. FlashCart prevents all three with database-level guarantees, not application locks. It's built on AWS managed services, defined entirely in CDK, written in Go, and deployed by a tested CI pipeline.
 
-**Load-test results at a glance** (one k6 run, 1,000 virtual users, 20 seconds; see [Load testing](#load-testing))
+## At a glance
 
-- **~6,920 requests per second** across 145,000+ requests
-- **132 ms** average latency (p95: 194 ms), measured by the k6 client
-- **0 oversold units**: 425 orders were sold or pending against 500 units of stock
+| | |
+| --- | --- |
+| **Throughput** | ~6,920 requests/s averaged over a 20-second spike to 1,000 virtual users ([k6](#proving-it-works)) |
+| **Latency** | 132 ms average, 194 ms p95, measured from the client |
+| **Correctness** | 0 oversold units; a 500-goroutine race test proves exactly 100 of 500 buyers win 100 units |
+| **Reliability** | Transactional outbox, compensating refunds, idempotent consumers, and a dead-letter queue with alerting |
+| **Delivery** | One CDK stack; every push to `main` runs the tests, then deploys through keyless OIDC |
+
+## Highlights
+
+- **Oversell-proof by construction.** The stock decrement (`stock >= :qty`) and the order insert (`attribute_not_exists(orderId)`) commit in one DynamoDB `TransactWriteItems` call. Either both happen or neither does, however many requests race.
+- **Idempotent end to end.** The client's `Idempotency-Key` is the order's primary key, so a retried request can't create a second order. Downstream, the worker only moves orders out of `PENDING`, so a message SQS delivers twice can't confirm or refund an order twice.
+- **No dual writes.** The API writes only to DynamoDB. DynamoDB Streams and EventBridge Pipes deliver each new order to SQS with no glue code (the transactional outbox pattern).
+- **Failure handled on purpose.** Declined payments trigger a compensating transaction that returns the unit to stock. Messages that keep failing go to a dead-letter queue, and a CloudWatch alarm sends an SNS notification.
+- **Observable and secure by default.** Embedded Metric Format turns log lines into CloudWatch metrics with no extra API calls on the request path. CI deploys with short-lived OIDC credentials, and the admin endpoint is protected by a generated Secrets Manager token.
 
 ## Architecture
 
@@ -32,197 +45,168 @@ flowchart LR
     queue --> worker["Worker Lambda<br/>(Go, arm64)"]
     worker -->|"confirm order / restore stock on decline"| db
     queue -.->|"after 3 failed receives"| dlq[["Dead-letter queue"]]
+    dlq -.->|alarm| sns[["SNS alerts"]]
 ```
-
-Everything above is one CDK stack, `InfraStack`, in [`infra/lib/infra-stack.ts`](infra/lib/infra-stack.ts).
-
-| Layer | Service | Role |
-| --- | --- | --- |
-| Frontend | S3 + CloudFront | Hosts the React/Vite dashboard (built from `web/dist`) over HTTPS |
-| Synchronous API | API Gateway HTTP API + Go Lambda (1,024 MB) | A single `/{proxy+}` route sends every request to one Lambda, which routes by path and method |
-| Database | DynamoDB (on-demand) | `Products` table keyed on `productId`; `Orders` table keyed on `orderId`, with a `NEW_IMAGE` stream |
-| Outbox pipeline | DynamoDB Streams + EventBridge Pipes + SQS | The pipe filters the stream to `INSERT` events and forwards each new order to the fulfillment queue, one record at a time |
-| Background worker | Go Lambda | Reads from SQS, confirms or refunds each order, and reports per-message failures back to SQS |
-| Observability | CloudWatch + SNS | `FlashCart-Live-Metrics` dashboard, plus a dead-letter queue alarm that publishes to an SNS topic |
-| Secrets | Secrets Manager | A generated admin token guards the restock endpoint |
-| CI/CD | GitHub Actions + IAM OIDC | Tests, then builds and deploys, on every push to `main` |
 
 ### How a purchase flows
 
-1. The customer clicks **Buy now**. The dashboard sends `POST /orders` with a random `Idempotency-Key` header.
-2. The API Lambda runs one DynamoDB `TransactWriteItems` call with two operations. Either both succeed or neither does:
-   - On `Products`: `SET stock = stock - :qty` with the condition `stock >= :qty`.
-   - On `Orders`: `Put` an item with `orderId` set to the idempotency key and `status` set to `PENDING`, with the condition `attribute_not_exists(orderId)`.
-3. If the order condition fails, the request is a replay, and the API returns `200` without touching stock, even after the sale has sold out. Otherwise, if the stock condition fails, the API returns `409 SOLD_OUT`.
-4. The new order appears in the `Orders` stream as an `INSERT`. EventBridge Pipes forwards it to the SQS fulfillment queue. Status updates made later by the worker are `MODIFY` events, so the filter keeps them out of the queue.
-5. The worker Lambda simulates payment, declining 20% of orders at random (`rand.Float32() < 0.20`). On success it sets the order to `CONFIRMED`. On a decline it runs a compensating transaction that sets the order to `FAILED` and adds the unit back to stock. Both writes require the order to still be `PENDING`, so if SQS delivers a message twice, the second delivery does nothing.
-6. If a DynamoDB write fails, or a message can't be parsed, the worker reports that message as a batch item failure, and SQS redelivers it. After the third receive, SQS moves the message to the dead-letter queue, and the alarm fires.
+1. **Reserve (synchronous).** `POST /orders` with an `Idempotency-Key` runs a single transaction: decrement stock if `stock >= 1`, and insert a `PENDING` order if that key is new. The API responds `201` for a new order, `200` for a replayed key, and `409` when sold out.
+2. **Publish (asynchronous).** The order's `INSERT` appears on the table's stream. EventBridge Pipes filters out everything except inserts and forwards the order to SQS.
+3. **Fulfill.** The worker simulates payment, declining 20% at random. An approved order becomes `CONFIRMED`. A declined order becomes `FAILED`, and in the same transaction its unit goes back on sale.
+4. **Recover.** A failed write is reported as a batch item failure, so SQS retries only that message. After three receives, it goes to the dead-letter queue and the alarm fires.
 
-## Engineering concepts
+## Key design decisions
 
-| Problem | Solution | How it works |
+| Problem | Decision | Why |
 | --- | --- | --- |
-| Overselling under concurrency | Conditional write inside a transaction | `stock >= :qty` lets DynamoDB reject any decrement that would take stock below zero. The decrement and the order insert commit together in one `TransactWriteItems` call. |
-| Duplicate orders on retries | Idempotency key as the primary key | The client's `Idempotency-Key` becomes `orderId`. `attribute_not_exists(orderId)` cancels the whole transaction on a replay, so stock is decremented once per key. |
-| Dual-write inconsistency | Transactional outbox | The API writes only to DynamoDB. The stream and the pipe deliver each new order to SQS, so the API never has to write to the database and the queue together. |
-| Failed payments | Compensating transaction | The worker marks the order `FAILED` and runs `SET stock = stock + :qty` in a single transaction. |
-| Duplicate SQS deliveries | Idempotent worker | Both the confirm and the refund carry the condition `#s = :pending`. A redelivered message fails that condition and is acknowledged, so a unit is never restored twice. |
-| Partial batch failures | `ReportBatchItemFailures` | The worker returns only the failed message IDs, so SQS retries those messages and not the whole batch. |
-| Poison messages | Dead-letter queue | `maxReceiveCount: 3` moves a message to `OrderDLQ` after its third failed receive. Malformed messages are reported as failures too, so they end up there rather than being dropped. A CloudWatch alarm notifies an SNS topic when the DLQ holds one or more messages. |
-| Unauthorized restocks | Shared secret | `POST /admin/products` requires an `X-Admin-Token` header. The API compares it in constant time against a generated Secrets Manager value, which it reads once per cold start. |
-| Blind spots in production | Embedded Metric Format | Both Lambdas print EMF JSON to stdout in the `FlashCart` namespace, so CloudWatch extracts metrics without extra API calls on the request path. The API emits `SoldOutRejections`. The worker emits `OrdersPlaced` (on confirmation) and `PaymentFailures`. |
-| Cold-start overhead | Init outside the handler | The AWS SDK client is created once per execution environment, not once per request. |
-| Credential leaks | OIDC deployments | GitHub Actions assumes an IAM role through OpenID Connect, so the repo stores no long-lived AWS access keys. The role trusts only `deploy.yml` on `refs/heads/main` of this repository. Its only permission is to assume the CDK bootstrap roles (`cdk-*`), which do the actual deploy. |
+| Overselling under concurrency | Conditional write inside a DynamoDB transaction | DynamoDB enforces the invariant atomically, so there are no locks, no read-then-write race, and nothing for Lambdas to coordinate. The cost is that transactional writes use twice the capacity of standard writes. |
+| Duplicate orders on retries | Idempotency key as the primary key | Deduplication happens in the same transaction as the reservation, so it can't drift out of sync with stock. |
+| Database and queue drifting apart | Transactional outbox with Streams and Pipes | If the API wrote to DynamoDB and SQS separately, a crash between the two writes would lose or orphan an order. With the stream as the single source of events, Pipes handles delivery with no consumer code to maintain. |
+| Failed payments | Compensating transaction | Stock is restored atomically with the status change, so a declined order frees its unit without any manual cleanup. |
+| At-least-once delivery from SQS | State-machine guard (`#s = :pending`) | Confirms and refunds are only valid from `PENDING`, so a redelivered message is acknowledged without doing anything. |
+| Poison messages | `ReportBatchItemFailures` and a dead-letter queue | One bad message neither blocks its batch nor retries forever, and an alert fires as soon as anything lands in the dead-letter queue. |
+| Metrics on the hot path | Embedded Metric Format | `SoldOutRejections`, `OrdersPlaced`, and `PaymentFailures` are emitted as structured logs, which costs no extra network calls. |
+| Cost and cold starts | Go on `provided.al2023`, arm64, SDK clients created at startup | Small static binaries start fast, and Graviton (arm64) Lambdas cost less per GB-second than x86. |
+| CI credentials | GitHub OIDC with a narrowly scoped role | The repo stores no long-lived AWS keys. The role trusts only this repo's `main` branch and workflow, and can only assume the CDK bootstrap roles. |
 
-## API
+## Proving it works
 
-All responses are JSON and carry CORS headers. Base URL: the `ApiUrl` stack output.
+| Layer | What it proves |
+| --- | --- |
+| **Concurrency test** ([`inventory_test.go`](backend/internal/inventory/inventory_test.go)) | 500 goroutines call `Reserve` simultaneously against 100 units on DynamoDB Local. Exactly 100 succeed, and final stock is `0`. |
+| **Infrastructure tests** ([`infra.test.ts`](infra/test/infra.test.ts)) | Assertions on the synthesized CloudFormation template pin down the critical settings: table keys and stream, the `INSERT`-only filter, `maxReceiveCount: 3`, batch failure reporting, alarm wiring, and a deploy role that isn't an administrator. |
+| **Load test** ([`script.js`](loadtest/script.js)) | k6 ramps to 1,000 virtual users with no think time. 10% of requests deliberately reuse an idempotency key to simulate client retries. Any response other than `201`, `200`, or `409` fails the check. |
+| **Post-run audit** ([`verifier`](loadtest/verifier/main.go)) | The audit scans every order and checks `500 − CONFIRMED − PENDING = remaining stock`, non-negative stock, known statuses, and an empty dead-letter queue. It exits non-zero if any check fails. |
+| **CI gate** ([`deploy.yml`](.github/workflows/deploy.yml)) | Go and CDK tests run against a DynamoDB Local service container on every push. Deploys happen only if they pass. |
 
-| Method | Path | Description |
-| --- | --- | --- |
-| `GET` | `/products/{id}` | Returns `{"productId", "stock"}` (`stock` is a string). Returns `404` if the product doesn't exist. The dashboard polls `/products/FLASH-TV-001` every second. |
-| `POST` | `/orders` | Places an order for 1 unit of `FLASH-TV-001` (the request body is ignored). Requires an `Idempotency-Key` header. Returns `201` for a new order, `200` for a replayed key (even when sold out), `400` if the header is missing, and `409` when sold out. |
-| `GET` | `/orders/{id}` | Returns `{"orderId", "status"}`, where `status` is `PENDING`, `CONFIRMED`, or `FAILED`. Returns `404` if the order doesn't exist. |
-| `POST` | `/admin/products` | Requires an `X-Admin-Token` header (`401` otherwise). Overwrites `FLASH-TV-001` with `stock = 500` and returns `201`. Existing orders are left in place. |
+### Load-test results
 
-Every endpoint returns `500` if DynamoDB returns an error.
-
-## Load testing
-
-[`loadtest/script.js`](loadtest/script.js) is a [k6](https://k6.io) script that simulates a flash-sale spike:
-
-- **Setup:** calls `POST /admin/products` once, with the `ADMIN_TOKEN` environment variable, to seed 500 units. The test aborts if seeding fails.
-- **Load profile:** ramps to 1,000 virtual users in 5 s, holds for 10 s, and ramps down over 5 s. There is no think time, so each VU sends requests back to back.
-- **Retries:** 10% of requests reuse a per-VU idempotency key (`loadtest-order-<vu>`) to simulate network retries.
-- **Check:** every response must be `201`, `200`, or `409`. Anything else, including a `500`, fails the check.
-
-After the run, [`loadtest/verifier`](loadtest/verifier/main.go) scans every page of the `Orders` table, counts orders by status, reads the remaining stock and the DLQ depth, and checks these invariants:
-
-- `500 − CONFIRMED − PENDING = remaining stock` (declined orders have returned their unit)
-- Stock is not negative, and orders hold no more than 500 units
-- Every order has a known status
-- The dead-letter queue is empty
-
-It prints `PASS` or `FAIL` for each check, and exits with `1` if any check fails. It finds the tables and the DLQ by name, so it needs no configuration beyond AWS credentials. It assumes the `Orders` table holds only orders placed since the last restock (see [Known limitations](#known-limitations)).
-
-Results from one run, with simulated payment declines at 20%. This run predates the current verifier and the worker idempotency fix, so the oversell figure is derived from the reported counts rather than from a `PASS` line:
+One 20-second spike (5 s ramp-up, 10 s hold at 1,000 virtual users, 5 s ramp-down), with simulated payment declines at 20%:
 
 | Metric | Result |
 | --- | --- |
-| Virtual users | 1,000 |
-| Throughput | ~6,920 requests/s (k6 `http_reqs` rate, averaged over the run) |
-| Average latency | 132 ms (client-side `http_req_duration`) |
-| p95 latency | 194 ms |
+| Throughput | ~6,920 requests/s (k6 `http_reqs`, averaged over the run) |
 | Total requests | 145,000+ |
-| Orders in the table | 510 |
-| `CONFIRMED` | 418 |
-| `FAILED` (declined, stock restored) | 85 |
-| `PENDING` (not yet processed when audited) | 7 |
-| **Oversold units** | **0** |
+| Latency (client-side) | 132 ms average, 194 ms p95 |
+| Orders created | 510: 418 confirmed, 85 declined (stock restored), 7 still pending |
+| **Oversold units** | **0** (418 + 7 = 425 units claimed of 500) |
 
-More than 500 orders exist because each declined order returns its unit to stock, where another buyer can claim it. Here, 418 + 7 = 425 units were claimed, which is within the 500 available.
+There are more than 500 orders because every declined order put its unit back on sale for another buyer. This run predates the current verifier, so the oversell figure comes from the reported counts rather than an automated `PASS` line.
 
-## Testing
+## Hardening pass
 
-- **Concurrency test:** [`backend/internal/inventory/inventory_test.go`](backend/internal/inventory/inventory_test.go) seeds 100 units in [DynamoDB Local](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/DynamoDBLocal.html), launches 500 goroutines that call `Reserve` at the same time, and asserts that exactly 100 succeed and that the final stock is `0`.
-- **Load test:** see [Load testing](#load-testing).
-- **CDK tests:** [`infra/test/infra.test.ts`](infra/test/infra.test.ts) synthesizes the stack and asserts the table keys and stream, the `INSERT`-only pipe filter, `maxReceiveCount: 3`, partial batch failure reporting, the alarm's SNS action, the admin token wiring, and that the deploy role is not an administrator.
-- **CI:** both suites run on every push. The deploy job runs only if they pass.
+A review comparing the code against its documentation turned up several edge cases. Each was fixed and covered:
+
+- **Double refund on redelivery.** A redelivered "declined" message could restore the same unit twice, which is a latent oversell. Confirms and refunds are now conditional on `PENDING`.
+- **Replay after sellout.** A retried request that arrived after the sale sold out returned `409`, although the order existed. The API now checks the idempotency condition first.
+- **Silently dropped poison messages.** Unparseable messages were acknowledged and lost. They now go to the dead-letter queue.
+- **Crash on read errors.** DynamoDB read errors caused nil-pointer panics. They now return `500` and are logged.
+- **Unauthenticated admin endpoint.** Anyone with the URL could reset stock. The endpoint now requires a generated Secrets Manager token.
+- **An audit that didn't check anything.** The verifier printed the invariant without evaluating it. It now evaluates every check and fails loudly.
 
 ## Tech stack
 
 | Area | Technologies |
 | --- | --- |
 | Backend | Go, AWS Lambda (`provided.al2023`, arm64), API Gateway HTTP API, AWS SDK for Go v2 |
-| Data and messaging | DynamoDB, DynamoDB Streams, EventBridge Pipes, SQS |
-| Security | IAM OIDC, Secrets Manager |
-| Observability | CloudWatch dashboards and alarms, SNS, Embedded Metric Format, structured JSON logging (`log/slog`) |
-| Infrastructure | AWS CDK (TypeScript), GitHub Actions with OIDC |
-| Frontend | React 19, TypeScript, Vite, TanStack Query, Axios |
-| Testing | Go `testing` against DynamoDB Local, Jest with CDK assertions, k6, custom Go verifier |
+| Data and messaging | DynamoDB (transactions, Streams), EventBridge Pipes, SQS |
+| Infrastructure and delivery | AWS CDK (TypeScript), GitHub Actions, IAM OIDC, Secrets Manager |
+| Observability | CloudWatch dashboards and alarms, SNS, Embedded Metric Format, structured logging (`log/slog`) |
+| Frontend | React 19, TypeScript, Vite, TanStack Query, Axios, served from S3 and CloudFront |
+| Testing | Go `testing` with DynamoDB Local, Jest with CDK assertions, k6, custom Go auditor |
 
-## Repository layout
+## What I'd build next
 
-```
-backend/
-  cmd/api/              API Lambda (router + handlers)
-  cmd/worker/           SQS worker Lambda (payment simulation, compensation)
-  internal/inventory/   Reserve transaction + concurrency test
-infra/                  CDK app (InfraStack)
-web/                    React dashboard (Vite)
-loadtest/
-  script.js             k6 load test
-  verifier/             Post-test audit (Go)
-.github/workflows/      deploy.yml (OIDC deploy on push to main)
-```
+- **A real catalog.** Product ID and quantity come from the request instead of being fixed to one TV and one unit.
+- **Run-scoped audits.** Tag orders with a sale ID, so restocks start a clean run and the verifier only counts that sale's orders.
+- **Tighter deploy permissions.** Bootstrap CDK with a custom CloudFormation execution policy instead of the default `AdministratorAccess`.
+- **CloudFront origin access control.** Migrate from the deprecated `S3Origin` to `S3BucketOrigin.withOriginAccessControl`.
+- **Runtime config for the frontend.** Have the dashboard read the API URL at runtime, so a fresh deployment needs only one deploy.
 
-## Getting started
+---
+
+<details>
+<summary><b>API reference</b></summary>
+
+All responses are JSON with CORS headers. The base URL is the `ApiUrl` stack output. Every endpoint returns `500` if DynamoDB returns an error.
+
+| Method | Path | Description |
+| --- | --- | --- |
+| `GET` | `/products/{id}` | Returns `{"productId", "stock"}` (`stock` is a string), or `404`. The dashboard polls `/products/FLASH-TV-001` every second. |
+| `POST` | `/orders` | Orders 1 unit of `FLASH-TV-001` (the body is ignored). Requires `Idempotency-Key`. Returns `201` for a new order, `200` for a replay (even when sold out), `400` if the header is missing, and `409` when sold out. |
+| `GET` | `/orders/{id}` | Returns `{"orderId", "status"}` with status `PENDING`, `CONFIRMED`, or `FAILED`, or `404`. |
+| `POST` | `/admin/products` | Requires `X-Admin-Token` (`401` otherwise). Sets `FLASH-TV-001` stock to 500 and returns `201`. Existing orders are kept. |
+
+</details>
+
+<details>
+<summary><b>Getting started</b></summary>
 
 **Prerequisites:** an AWS account with credentials configured, Go 1.27+, Node.js 20+, and (optionally) k6 and Docker.
 
-The CDK stack packages prebuilt artifacts, so build the Lambdas and the frontend **before** you deploy. `cdk deploy` uploads `backend/cmd/*/bootstrap` and `web/dist` as they are.
+CDK uploads the prebuilt `backend/cmd/*/bootstrap` binaries and `web/dist` as they are, so build them before you deploy:
 
 ```bash
-# 1. Build both Lambdas for arm64 (run from the repo root)
+# 1. Build both Lambdas for arm64 (from the repo root)
 (cd backend/cmd/api    && GOOS=linux GOARCH=arm64 go build -tags lambda.norpc -o bootstrap main.go)
 (cd backend/cmd/worker && GOOS=linux GOARCH=arm64 go build -tags lambda.norpc -o bootstrap main.go)
 
 # 2. Build the dashboard
 (cd web && npm ci && npm run build)
 
-# 3. Deploy the stack
+# 3. Deploy
 cd infra
 npm ci
 npx cdk bootstrap   # first deploy to an account/region only
 npx cdk deploy      # add -c alertEmail=you@example.com to get DLQ alarms by email
 ```
 
-The deploy prints these outputs: `ApiUrl`, `WebsiteUrl` (the CloudFront domain), `AdminTokenSecretArn`, `AlarmTopicArn`, and `GitHubRoleArn`.
+The deploy prints `ApiUrl`, `WebsiteUrl`, `AdminTokenSecretArn`, `AlarmTopicArn`, and `GitHubRoleArn`.
 
-The API URL is hardcoded as `API_URL` in [`web/src/App.tsx`](web/src/App.tsx). On a new deployment, set it to your `ApiUrl`, rebuild the frontend (step 2), and run `npx cdk deploy` again.
+1. Set `API_URL` in [`web/src/App.tsx`](web/src/App.tsx) to your `ApiUrl`, rebuild the dashboard, and deploy again.
+2. Fetch the admin token:
+   ```bash
+   aws secretsmanager get-secret-value --secret-id <AdminTokenSecretArn> --query SecretString --output text
+   ```
+3. Open `https://<WebsiteUrl>` (or run `npm run dev` in `web/`), paste the token into **Admin token**, and click **Reset warehouse** to load 500 units.
 
-To restock, fetch the admin token:
+If you passed `alertEmail`, confirm the SNS subscription email from AWS.
 
-```bash
-aws secretsmanager get-secret-value --secret-id <AdminTokenSecretArn> --query SecretString --output text
-```
-
-Open `https://<WebsiteUrl>` (or run `npm run dev` in `web/` for local development), paste the token into the **Admin token** field, and click **Reset warehouse** to load 500 units. The dashboard keeps the token only in page state and doesn't store it.
-
-If you passed `alertEmail`, confirm the SNS subscription email that AWS sends you, or the alarm won't reach your inbox.
-
-**Deploying from a fork:** the stack creates a GitHub OIDC provider (which fails if your account already has one) and trusts only `rishon-g/flashcart`. Change the repository and `job_workflow_ref` conditions in `infra-stack.ts`. Then put your `GitHubRoleArn` output into `role-to-assume` in `.github/workflows/deploy.yml`.
+**Deploying from a fork:** the stack creates a GitHub OIDC provider (this fails if your account already has one) and trusts only `rishon-g/flashcart`. Update the repository and `job_workflow_ref` conditions in `infra/lib/infra-stack.ts`, then set `role-to-assume` in `.github/workflows/deploy.yml` to your `GitHubRoleArn`.
 
 ### Running the tests
 
 ```bash
-# Concurrency test: needs DynamoDB Local on port 8000 (each run creates its own tables)
+# Concurrency test (each run creates its own tables)
 docker run --rm -d -p 8000:8000 amazon/dynamodb-local
 (cd backend && go test ./... -v)
 
 # CDK tests
 (cd infra && npm test)
 
-# Load test against a deployed stack (this resets stock to 500 first)
+# Load test against a deployed stack (resets stock to 500 first)
 k6 run -e API_URL=https://<api-id>.execute-api.<region>.amazonaws.com -e ADMIN_TOKEN=<token> loadtest/script.js
 
-# Audit the tables once the queue drains (uses your default AWS credentials and region)
+# Audit once the queue drains. Assumes the Orders table holds only this run's orders.
 (cd loadtest/verifier && go run .)
 ```
 
-## CI/CD
+</details>
 
-[`.github/workflows/deploy.yml`](.github/workflows/deploy.yml) runs on every push to `main`, in two jobs:
+<details>
+<summary><b>Repository layout</b></summary>
 
-1. **test:** runs `go vet` and `go test` against a DynamoDB Local service container, then runs the CDK Jest tests.
-2. **deploy** (only if `test` passes): assumes the deploy role through OIDC in `us-east-1`, builds both Go Lambdas and the React app, and runs `cdk deploy --require-approval never`.
+```
+backend/
+  cmd/api/              API Lambda (router + handlers)
+  cmd/worker/           SQS worker Lambda (payment simulation, compensation)
+  internal/inventory/   Reserve transaction + concurrency test
+infra/                  CDK app (InfraStack) + template assertions
+web/                    React dashboard (Vite)
+loadtest/
+  script.js             k6 load test
+  verifier/             Post-run invariant audit (Go)
+.github/workflows/      deploy.yml: test, then OIDC deploy on push to main
+```
 
-Both jobs read the Go version from `backend/go.mod`.
-
-## Known limitations
-
-- **Single product, single unit.** The product ID and quantity are hardcoded in the API (`FLASH-TV-001`, qty 1).
-- **Restocking doesn't clear orders.** `POST /admin/products` resets only the stock. The verifier's stock equation assumes the `Orders` table holds only orders placed since the last restock, so it will report `FAIL` after a second run unless you clear the table first (or redeploy).
-- **Deploys still run with broad permissions.** The GitHub role can only assume the CDK bootstrap roles, but by default the CloudFormation execution role that those roles use has `AdministratorAccess`. Pass `--cloudformation-execution-policies` to `cdk bootstrap` to narrow it.
-- **The CloudFront origin uses a deprecated API.** `S3Origin` (origin access identity) still works, but CDK recommends `S3BucketOrigin.withOriginAccessControl`.
-- **The frontend's API URL is hardcoded,** so each new deployment needs a rebuild and a second deploy.
+</details>
