@@ -10,7 +10,7 @@
 ![React](https://img.shields.io/badge/React-20232A?logo=react&logoColor=61DAFB)
 ![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white)
 
-https://github.com/user-attachments/assets/cd0d3ee8-b07c-4732-ad13-b512206da8d0
+https://github.com/user-attachments/assets/bf684da3-dfdd-4f52-a990-ea2e38d165f1
 
 In a flash sale, thousands of buyers race for a few hundred units in a few seconds. A naive checkout oversells, double-charges people whose requests are retried, and loses orders when one step fails partway. FlashCart prevents all three with database-level guarantees, not application locks. It's built on AWS managed services, defined entirely in CDK, written in Go, and deployed by a tested CI pipeline.
 
