@@ -18,6 +18,7 @@ function Dashboard() {
   const [message, setMessage] = useState<{ text: string; tone: Tone } | null>(null)
   const [buying, setBuying] = useState(false)
   const [resetting, setResetting] = useState(false)
+  const [adminToken, setAdminToken] = useState('')
 
   const { data: stock, isLoading, isError } = useQuery({
     queryKey: ['tvStock'],
@@ -46,11 +47,17 @@ function Dashboard() {
     setResetting(true)
     setMessage({ text: 'Loading TVs into the warehouse…', tone: 'info' })
     try {
-      await axios.post(`${API_URL}/admin/products`)
+      await axios.post(`${API_URL}/admin/products`, null, {
+        headers: { 'X-Admin-Token': adminToken },
+      })
       setMessage({ text: `Warehouse restocked to ${TOTAL_STOCK} TVs.`, tone: 'success' })
       queryClient.invalidateQueries({ queryKey: ['tvStock'] })
-    } catch {
-      setMessage({ text: 'Restock failed. Check the API and try again.', tone: 'error' })
+    } catch (error: any) {
+      if (error.response?.status === 401) {
+        setMessage({ text: 'Restock refused. Check the admin token.', tone: 'error' })
+      } else {
+        setMessage({ text: 'Restock failed. Check the API and try again.', tone: 'error' })
+      }
     } finally {
       setResetting(false)
     }
@@ -143,7 +150,16 @@ function Dashboard() {
 
         <footer className="admin-bar">
           <span>Admin tools. Restocks inventory to {TOTAL_STOCK} units.</span>
-          <button onClick={handleSeed} className="admin-btn" disabled={resetting}>
+          <input
+            type="password"
+            className="admin-input"
+            placeholder="Admin token"
+            aria-label="Admin token"
+            autoComplete="off"
+            value={adminToken}
+            onChange={(e) => setAdminToken(e.target.value)}
+          />
+          <button onClick={handleSeed} className="admin-btn" disabled={resetting || adminToken === ''}>
             {resetting ? 'Restocking…' : 'Reset warehouse'}
           </button>
         </footer>

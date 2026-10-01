@@ -249,6 +249,22 @@ body {
   color: var(--text-muted);
 }
 
+.admin-input {
+  flex: 1;
+  min-width: 0;
+  max-width: 16rem;
+  margin-left: auto;
+  background: transparent;
+  color: var(--text-main);
+  font: inherit;
+  font-size: 0.8125rem;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--admin-bg);
+  border-radius: 8px;
+}
+
+.admin-input::placeholder { color: var(--text-muted); }
+
 .admin-btn {
   flex-shrink: 0;
   background: transparent;
@@ -270,7 +286,7 @@ body {
 
 .admin-btn:disabled { opacity: 0.6; cursor: not-allowed; }
 
-:is(.buy-btn, .admin-btn):focus-visible {
+:is(.buy-btn, .admin-btn, .admin-input):focus-visible {
   outline: 2px solid var(--flash-hover);
   outline-offset: 3px;
 }
@@ -286,6 +302,7 @@ body {
   .details, .stock-panel { padding: 1.75rem 1.5rem; }
   .stock-panel { border-left: none; border-top: 1px solid var(--border); }
   .admin-bar { padding: 0.9rem 1.5rem; flex-direction: column; align-items: stretch; text-align: center; }
+  .admin-input { max-width: none; margin-left: 0; }
   .product-title { font-size: 1.875rem; }
   .current-price { font-size: 2.75rem; }
 }
