@@ -75,6 +75,10 @@ func handleAdminSeed(ctx context.Context, req events.APIGatewayV2HTTPRequest) (e
 func handleGetProduct(ctx context.Context, req events.APIGatewayV2HTTPRequest) (events.APIGatewayV2HTTPResponse, error) {
 	parts := strings.Split(req.RawPath, "/")
 	productID := parts[len(parts)-1]
+	if productID == "" {
+		// "/products/" has no ID, and DynamoDB rejects an empty key
+		return buildResponse(404, map[string]string{"error": "Product not found"})
+	}
 
 	result, err := db.GetItem(ctx, &dynamodb.GetItemInput{
 		TableName: aws.String(productsTable),
@@ -134,6 +138,9 @@ func handleCreateOrder(ctx context.Context, req events.APIGatewayV2HTTPRequest) 
 func handleGetOrder(ctx context.Context, req events.APIGatewayV2HTTPRequest) (events.APIGatewayV2HTTPResponse, error) {
 	parts := strings.Split(req.RawPath, "/")
 	orderID := parts[len(parts)-1]
+	if orderID == "" {
+		return buildResponse(404, map[string]string{"error": "Order not found"})
+	}
 
 	result, err := db.GetItem(ctx, &dynamodb.GetItemInput{
 		TableName: aws.String(ordersTable),
