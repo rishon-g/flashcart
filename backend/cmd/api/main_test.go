@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/aws/aws-lambda-go/events"
@@ -39,5 +40,33 @@ func TestHandlerRejectsRequestsBeforeTouchingDynamo(t *testing.T) {
 				t.Errorf("body = %s, want %s", resp.Body, want)
 			}
 		})
+	}
+}
+
+func TestAdminSeedRequiresTheToken(t *testing.T) {
+	adminToken = "s3cret"
+	defer func() { adminToken = "" }()
+
+	for name, headers := range map[string]map[string]string{
+		"missing": nil,
+		"wrong":   {"x-admin-token": "nope"},
+	} {
+		resp, _ := handler(context.Background(), request("POST", "/admin/products", headers))
+		if resp.StatusCode != 401 {
+			t.Errorf("%s token: status = %d, want 401", name, resp.StatusCode)
+		}
+	}
+}
+
+func TestPreflightAllowsTheCustomHeaders(t *testing.T) {
+	resp, _ := handler(context.Background(), request("OPTIONS", "/orders", nil))
+	if resp.StatusCode != 200 {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	allowed := resp.Headers["Access-Control-Allow-Headers"]
+	for _, h := range []string{"Idempotency-Key", "X-Admin-Token"} {
+		if !strings.Contains(allowed, h) {
+			t.Errorf("Access-Control-Allow-Headers %q is missing %s", allowed, h)
+		}
 	}
 }
