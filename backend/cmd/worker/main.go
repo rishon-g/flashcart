@@ -26,7 +26,6 @@ func init() {
 	db = dynamodb.NewFromConfig(cfg)
 	productsTable = os.Getenv("PRODUCTS_TABLE")
 	ordersTable = os.Getenv("ORDERS_TABLE")
-	rand.Seed(time.Now().UnixNano())
 }
 
 func handler(ctx context.Context, sqsEvent events.SQSEvent) (events.SQSEventResponse, error) {
