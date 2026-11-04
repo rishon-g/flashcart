@@ -70,3 +70,22 @@ func TestPreflightAllowsTheCustomHeaders(t *testing.T) {
 		}
 	}
 }
+
+func TestBuildResponseReturnsJSONWithCORSHeaders(t *testing.T) {
+	resp, err := buildResponse(409, map[string]string{"error": "SOLD_OUT"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != 409 {
+		t.Errorf("status = %d, want 409", resp.StatusCode)
+	}
+	if got := resp.Headers["Content-Type"]; got != "application/json" {
+		t.Errorf("Content-Type = %q, want application/json", got)
+	}
+	if got := resp.Headers["Access-Control-Allow-Origin"]; got != "*" {
+		t.Errorf("Access-Control-Allow-Origin = %q, want *", got)
+	}
+	if resp.Body != `{"error":"SOLD_OUT"}` {
+		t.Errorf("body = %s", resp.Body)
+	}
+}
