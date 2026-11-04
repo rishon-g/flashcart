@@ -1,6 +1,12 @@
 package main
 
-import "testing"
+import (
+	"errors"
+	"testing"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+)
 
 func TestParsePipeMessage(t *testing.T) {
 	cases := []struct {
@@ -21,5 +27,25 @@ func TestParsePipeMessage(t *testing.T) {
 				t.Errorf("got (%q, %q), want (%q, %q)", order, product, c.wantOrder, c.wantProduct)
 			}
 		})
+	}
+}
+
+func TestIsAlreadyProcessed(t *testing.T) {
+	if isAlreadyProcessed(nil) {
+		t.Error("nil error should not count as already processed")
+	}
+	if isAlreadyProcessed(errors.New("boom")) {
+		t.Error("an unrelated error should not count as already processed")
+	}
+	if !isAlreadyProcessed(&types.ConditionalCheckFailedException{}) {
+		t.Error("ConditionalCheckFailedException should count as already processed")
+	}
+	tce := &types.TransactionCanceledException{CancellationReasons: []types.CancellationReason{{Code: aws.String("ConditionalCheckFailed")}}}
+	if !isAlreadyProcessed(tce) {
+		t.Error("a cancelled transaction whose first reason is a failed condition should count")
+	}
+	tce = &types.TransactionCanceledException{CancellationReasons: []types.CancellationReason{{Code: aws.String("None")}, {Code: aws.String("ConditionalCheckFailed")}}}
+	if isAlreadyProcessed(tce) {
+		t.Error("only the first cancellation reason (the order update) should count")
 	}
 }
