@@ -2,6 +2,9 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"io"
+	"os"
 	"strings"
 	"testing"
 
@@ -87,5 +90,29 @@ func TestBuildResponseReturnsJSONWithCORSHeaders(t *testing.T) {
 	}
 	if resp.Body != `{"error":"SOLD_OUT"}` {
 		t.Errorf("body = %s", resp.Body)
+	}
+}
+
+func TestLogEMFMetricEmitsValidEMFJSON(t *testing.T) {
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	orig := os.Stdout
+	os.Stdout = w
+	logEMFMetric("OrderCreated", 1)
+	os.Stdout = orig
+	w.Close()
+	out, _ := io.ReadAll(r)
+
+	var got map[string]any
+	if err := json.Unmarshal(out, &got); err != nil {
+		t.Fatalf("output is not valid JSON: %v\n%s", err, out)
+	}
+	if got["OrderCreated"] != float64(1) {
+		t.Errorf("OrderCreated = %v, want 1", got["OrderCreated"])
+	}
+	if _, ok := got["_aws"]; !ok {
+		t.Error("missing _aws metadata block")
 	}
 }
