@@ -1,7 +1,10 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
+	"io"
+	"os"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -47,5 +50,29 @@ func TestIsAlreadyProcessed(t *testing.T) {
 	tce = &types.TransactionCanceledException{CancellationReasons: []types.CancellationReason{{Code: aws.String("None")}, {Code: aws.String("ConditionalCheckFailed")}}}
 	if isAlreadyProcessed(tce) {
 		t.Error("only the first cancellation reason (the order update) should count")
+	}
+}
+
+func TestLogEMFMetricEmitsValidEMFJSON(t *testing.T) {
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	orig := os.Stdout
+	os.Stdout = w
+	logEMFMetric("OrderConfirmed", 3)
+	os.Stdout = orig
+	w.Close()
+	out, _ := io.ReadAll(r)
+
+	var got map[string]any
+	if err := json.Unmarshal(out, &got); err != nil {
+		t.Fatalf("output is not valid JSON: %v\n%s", err, out)
+	}
+	if got["OrderConfirmed"] != float64(3) {
+		t.Errorf("OrderConfirmed = %v, want 3", got["OrderConfirmed"])
+	}
+	if _, ok := got["_aws"]; !ok {
+		t.Error("missing _aws metadata block")
 	}
 }
