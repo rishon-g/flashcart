@@ -63,6 +63,16 @@ func TestAdminSeedRequiresTheToken(t *testing.T) {
 	}
 }
 
+func TestAdminSeedRejectsEveryCallerWhenNoTokenIsConfigured(t *testing.T) {
+	adminToken = ""
+
+	// an empty header must not match an unset token
+	resp, _ := handler(context.Background(), request("POST", "/admin/products", map[string]string{"x-admin-token": ""}))
+	if resp.StatusCode != 401 {
+		t.Errorf("status = %d, want 401", resp.StatusCode)
+	}
+}
+
 func TestPreflightAllowsTheCustomHeaders(t *testing.T) {
 	resp, _ := handler(context.Background(), request("OPTIONS", "/orders", nil))
 	if resp.StatusCode != 200 {
