@@ -1,12 +1,14 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
 	"os"
 	"testing"
 
+	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 )
@@ -30,6 +32,27 @@ func TestParsePipeMessage(t *testing.T) {
 				t.Errorf("got (%q, %q), want (%q, %q)", order, product, c.wantOrder, c.wantProduct)
 			}
 		})
+	}
+}
+
+// Malformed records are reported before any DynamoDB call, so the nil client is never used.
+func TestHandlerReportsMalformedMessagesAsBatchFailures(t *testing.T) {
+	event := events.SQSEvent{Records: []events.SQSMessage{
+		{MessageId: "m-1", Body: "not json"},
+		{MessageId: "m-2", Body: `{"dynamodb":{"NewImage":{"orderId":{"S":"o-1"}}}}`},
+	}}
+
+	resp, err := handler(context.Background(), event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.BatchItemFailures) != 2 {
+		t.Fatalf("got %d batch failures, want 2", len(resp.BatchItemFailures))
+	}
+	for i, id := range []string{"m-1", "m-2"} {
+		if got := resp.BatchItemFailures[i].ItemIdentifier; got != id {
+			t.Errorf("failure %d = %q, want %q", i, got, id)
+		}
 	}
 }
 
