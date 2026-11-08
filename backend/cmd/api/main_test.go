@@ -105,6 +105,16 @@ func TestBuildResponseReturnsJSONWithCORSHeaders(t *testing.T) {
 	}
 }
 
+func TestNotFoundResponseStillCarriesCORSHeaders(t *testing.T) {
+	resp, _ := handler(context.Background(), request("GET", "/nope", nil))
+	if resp.StatusCode != 404 {
+		t.Fatalf("status = %d, want 404", resp.StatusCode)
+	}
+	if got := resp.Headers["Access-Control-Allow-Origin"]; got != "*" {
+		t.Errorf("Access-Control-Allow-Origin = %q, want * so the browser can read the 404", got)
+	}
+}
+
 func TestLogEMFMetricEmitsValidEMFJSON(t *testing.T) {
 	r, w, err := os.Pipe()
 	if err != nil {
