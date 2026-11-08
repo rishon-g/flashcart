@@ -56,6 +56,16 @@ func TestHandlerReportsMalformedMessagesAsBatchFailures(t *testing.T) {
 	}
 }
 
+func TestHandlerWithEmptyBatchReportsNoFailures(t *testing.T) {
+	resp, err := handler(context.Background(), events.SQSEvent{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.BatchItemFailures) != 0 {
+		t.Errorf("got %d batch failures for an empty batch, want 0", len(resp.BatchItemFailures))
+	}
+}
+
 func TestIsAlreadyProcessed(t *testing.T) {
 	if isAlreadyProcessed(nil) {
 		t.Error("nil error should not count as already processed")
