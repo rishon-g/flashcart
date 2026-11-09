@@ -22,7 +22,11 @@ var productsTable string
 var ordersTable string
 
 func init() {
-	cfg, _ := config.LoadDefaultConfig(context.TODO())
+	cfg, err := config.LoadDefaultConfig(context.TODO())
+	if err != nil {
+		// the client below is unusable without a config, so fail the cold start loudly
+		panic(fmt.Sprintf("failed to load AWS config: %v", err))
+	}
 	db = dynamodb.NewFromConfig(cfg)
 	productsTable = os.Getenv("PRODUCTS_TABLE")
 	ordersTable = os.Getenv("ORDERS_TABLE")
