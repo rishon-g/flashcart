@@ -42,7 +42,7 @@ func handler(ctx context.Context, req events.APIGatewayV2HTTPRequest) (events.AP
 		return handleAdminSeed(ctx, req)
 	} else if strings.HasPrefix(path, "/products/") && method == "GET" {
 		return handleGetProduct(ctx, req)
-	} else if strings.HasPrefix(path, "/orders") && method == "POST" {
+	} else if path == "/orders" && method == "POST" {
 		return handleCreateOrder(ctx, req)
 	} else if strings.HasPrefix(path, "/orders/") && method == "GET" {
 		return handleGetOrder(ctx, req)
