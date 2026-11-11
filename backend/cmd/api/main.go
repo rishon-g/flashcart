@@ -38,7 +38,7 @@ func handler(ctx context.Context, req events.APIGatewayV2HTTPRequest) (events.AP
 		return buildResponse(200, map[string]string{"message": "CORS OK"})
 	}
 
-	if strings.HasPrefix(path, "/admin/products") && method == "POST" {
+	if path == "/admin/products" && method == "POST" {
 		return handleAdminSeed(ctx, req)
 	} else if strings.HasPrefix(path, "/products/") && method == "GET" {
 		return handleGetProduct(ctx, req)

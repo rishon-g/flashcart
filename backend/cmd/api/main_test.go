@@ -32,6 +32,7 @@ func TestHandlerRejectsRequestsBeforeTouchingDynamo(t *testing.T) {
 		{"wrong method on products", request("POST", "/products/FLASH-TV-001", nil), 404, "Route not found"},
 		{"get orders without an id segment", request("GET", "/orders", nil), 404, "Route not found"},
 		{"post to a path that only starts with /orders", request("POST", "/ordersfoo", map[string]string{"idempotency-key": "k"}), 404, "Route not found"},
+		{"post to a path that only starts with /admin/products", request("POST", "/admin/products/extra", nil), 404, "Route not found"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
