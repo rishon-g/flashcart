@@ -37,7 +37,6 @@ func handler(ctx context.Context, sqsEvent events.SQSEvent) (events.SQSEventResp
 
 	for _, message := range sqsEvent.Records {
 		orderID, productID := parsePipeMessage(message.Body)
-		fmt.Println("RAW MESSAGE:", message.Body)
 		
 		// a message we can't parse will never succeed, so fail it and let sqs move it to the dlq
 		if orderID == "" || productID == "" {
