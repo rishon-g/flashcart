@@ -92,3 +92,14 @@ test('CloudFront redirects HTTP viewers to HTTPS', () => {
     }),
   });
 });
+
+test('Alarm topic gets an email subscription only when alertEmail is set', () => {
+  template.resourceCountIs('AWS::SNS::Subscription', 0);
+
+  const app = new cdk.App({ context: { alertEmail: 'ops@example.com' } });
+  const withEmail = Template.fromStack(new InfraStack(app, 'AlertStack'));
+  withEmail.hasResourceProperties('AWS::SNS::Subscription', {
+    Protocol: 'email',
+    Endpoint: 'ops@example.com',
+  });
+});
