@@ -135,9 +135,8 @@ func handleCreateOrder(ctx context.Context, req events.APIGatewayV2HTTPRequest) 
 }
 
 func handleGetOrder(ctx context.Context, req events.APIGatewayV2HTTPRequest) (events.APIGatewayV2HTTPResponse, error) {
-	parts := strings.Split(req.RawPath, "/")
-	orderID := parts[len(parts)-1]
-	if orderID == "" {
+	orderID := strings.TrimPrefix(req.RawPath, "/orders/")
+	if orderID == "" || strings.Contains(orderID, "/") {
 		return buildResponse(404, map[string]string{"error": "Order not found"})
 	}
 
