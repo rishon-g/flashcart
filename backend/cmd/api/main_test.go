@@ -27,6 +27,7 @@ func TestHandlerRejectsRequestsBeforeTouchingDynamo(t *testing.T) {
 	}{
 		{"unknown route", request("GET", "/nope", nil), 404, "Route not found"},
 		{"empty product id", request("GET", "/products/", nil), 404, "Product not found"},
+		{"nested product path", request("GET", "/products/FLASH-TV-001/extra", nil), 404, "Product not found"},
 		{"empty order id", request("GET", "/orders/", nil), 404, "Order not found"},
 		{"order without idempotency key", request("POST", "/orders", nil), 400, "Missing Idempotency-Key header"},
 		{"wrong method on products", request("POST", "/products/FLASH-TV-001", nil), 404, "Route not found"},

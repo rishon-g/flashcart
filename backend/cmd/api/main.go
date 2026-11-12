@@ -73,10 +73,9 @@ func handleAdminSeed(ctx context.Context, req events.APIGatewayV2HTTPRequest) (e
 }
 
 func handleGetProduct(ctx context.Context, req events.APIGatewayV2HTTPRequest) (events.APIGatewayV2HTTPResponse, error) {
-	parts := strings.Split(req.RawPath, "/")
-	productID := parts[len(parts)-1]
-	if productID == "" {
-		// "/products/" has no ID, and DynamoDB rejects an empty key
+	productID := strings.TrimPrefix(req.RawPath, "/products/")
+	if productID == "" || strings.Contains(productID, "/") {
+		// "/products/" has no ID (DynamoDB rejects an empty key), and "/products/a/b" isn't a product
 		return buildResponse(404, map[string]string{"error": "Product not found"})
 	}
 
