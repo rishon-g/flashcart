@@ -67,3 +67,19 @@ test('GitHub deploy role is not an administrator', () => {
   expect(role).toBeDefined();
   expect(JSON.stringify(role.Properties.ManagedPolicyArns ?? [])).not.toContain('AdministratorAccess');
 });
+
+test('GitHub deploy role can only be assumed from main of this repo', () => {
+  template.hasResourceProperties('AWS::IAM::Role', {
+    Description: 'Role assumed by GitHub Actions to deploy the CDK app',
+    AssumeRolePolicyDocument: {
+      Statement: [Match.objectLike({
+        Condition: {
+          StringEquals: Match.objectLike({
+            'token.actions.githubusercontent.com:repository': 'rishon-g/flashcart',
+            'token.actions.githubusercontent.com:ref': 'refs/heads/main',
+          }),
+        },
+      })],
+    },
+  });
+});
