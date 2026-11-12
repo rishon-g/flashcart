@@ -74,7 +74,7 @@ flowchart LR
 | Layer | What it proves |
 | --- | --- |
 | **Concurrency test** ([`inventory_test.go`](backend/internal/inventory/inventory_test.go)) | 500 goroutines call `Reserve` simultaneously against 100 units on DynamoDB Local. Exactly 100 succeed, and final stock is `0`. |
-| **Infrastructure tests** ([`infra.test.ts`](infra/test/infra.test.ts)) | Assertions on the synthesized CloudFormation template pin down the critical settings: table keys and stream, the `INSERT`-only filter, `maxReceiveCount: 3`, batch failure reporting, alarm wiring, and a deploy role that isn't an administrator. |
+| **Infrastructure tests** ([`infra.test.ts`](infra/test/infra.test.ts)) | Assertions on the synthesized CloudFormation template pin down the critical settings: table keys and stream, the `INSERT`-only filter, `maxReceiveCount: 3`, batch failure reporting, alarm wiring and the optional email subscription, HTTPS-only CloudFront, and a deploy role that isn't an administrator and only trusts `main` of this repo. |
 | **Load test** ([`script.js`](loadtest/script.js)) | k6 ramps to 1,000 virtual users with no think time. 10% of requests deliberately reuse an idempotency key to simulate client retries. Any response other than `201`, `200`, or `409` fails the check. |
 | **Post-run audit** ([`verifier`](loadtest/verifier/main.go)) | The audit scans every order and checks `500 − CONFIRMED − PENDING = remaining stock`, non-negative stock, known statuses, and an empty dead-letter queue. It exits non-zero if any check fails. |
 | **CI gate** ([`deploy.yml`](.github/workflows/deploy.yml)) | Go and CDK tests run against a DynamoDB Local service container on every push. Deploys happen only if they pass. |
