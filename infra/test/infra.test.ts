@@ -83,3 +83,12 @@ test('GitHub deploy role can only be assumed from main of this repo', () => {
     },
   });
 });
+
+test('CloudFront redirects HTTP viewers to HTTPS', () => {
+  template.hasResourceProperties('AWS::CloudFront::Distribution', {
+    DistributionConfig: Match.objectLike({
+      DefaultCacheBehavior: Match.objectLike({ ViewerProtocolPolicy: 'redirect-to-https' }),
+      DefaultRootObject: 'index.html',
+    }),
+  });
+});
