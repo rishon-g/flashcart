@@ -103,3 +103,12 @@ test('Alarm topic gets an email subscription only when alertEmail is set', () =>
     Endpoint: 'ops@example.com',
   });
 });
+
+test('DLQ alarm fires as soon as one message is dead-lettered', () => {
+  template.hasResourceProperties('AWS::CloudWatch::Alarm', {
+    MetricName: 'ApproximateNumberOfMessagesVisible',
+    Threshold: 1,
+    EvaluationPeriods: 1,
+    ComparisonOperator: 'GreaterThanOrEqualToThreshold',
+  });
+});
