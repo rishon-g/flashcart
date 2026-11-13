@@ -112,3 +112,12 @@ test('DLQ alarm fires as soon as one message is dead-lettered', () => {
     ComparisonOperator: 'GreaterThanOrEqualToThreshold',
   });
 });
+
+test('Both Lambdas run the arm64 bootstrap binary on provided.al2023', () => {
+  // the deploy builds with GOOS=linux GOARCH=arm64 -o bootstrap, so these must match
+  template.resourcePropertiesCountIs('AWS::Lambda::Function', {
+    Runtime: 'provided.al2023',
+    Architectures: ['arm64'],
+    Handler: 'bootstrap',
+  }, 2);
+});
