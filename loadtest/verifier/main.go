@@ -52,8 +52,11 @@ func main() {
 	}
 
 	queues, err := sqsClient.ListQueues(ctx, &sqs.ListQueuesInput{QueueNamePrefix: aws.String("InfraStack-OrderDLQ")})
-	if err != nil || len(queues.QueueUrls) == 0 {
-		fail("could not find the dead-letter queue: %v", err)
+	if err != nil {
+		fail("listing queues: %v", err)
+	}
+	if len(queues.QueueUrls) == 0 {
+		fail("could not find the dead-letter queue in this account/region")
 	}
 	dlqUrl := queues.QueueUrls[0]
 
@@ -87,8 +90,11 @@ func main() {
 		TableName: &productsTable,
 		Key: map[string]types.AttributeValue{"productId": &types.AttributeValueMemberS{Value: "FLASH-TV-001"}},
 	})
-	if err != nil || product.Item == nil {
+	if err != nil {
 		fail("reading FLASH-TV-001: %v", err)
+	}
+	if product.Item == nil {
+		fail("FLASH-TV-001 not found in %s (has the sale been seeded?)", productsTable)
 	}
 	stockAttr, ok := product.Item["stock"].(*types.AttributeValueMemberN)
 	if !ok {
