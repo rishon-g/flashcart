@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"testing"
@@ -83,6 +84,18 @@ func TestIsAlreadyProcessed(t *testing.T) {
 	tce = &types.TransactionCanceledException{CancellationReasons: []types.CancellationReason{{Code: aws.String("None")}, {Code: aws.String("ConditionalCheckFailed")}}}
 	if isAlreadyProcessed(tce) {
 		t.Error("only the first cancellation reason (the order update) should count")
+	}
+}
+
+// the SDK returns service exceptions wrapped in an operation error, so the check must unwrap
+func TestIsAlreadyProcessedUnwrapsSDKErrors(t *testing.T) {
+	wrapped := fmt.Errorf("operation error DynamoDB: UpdateItem: %w", &types.ConditionalCheckFailedException{})
+	if !isAlreadyProcessed(wrapped) {
+		t.Error("a wrapped ConditionalCheckFailedException should count as already processed")
+	}
+	tce := &types.TransactionCanceledException{CancellationReasons: []types.CancellationReason{{Code: aws.String("ConditionalCheckFailed")}}}
+	if !isAlreadyProcessed(fmt.Errorf("operation error DynamoDB: TransactWriteItems: %w", tce)) {
+		t.Error("a wrapped cancelled transaction whose first reason is a failed condition should count")
 	}
 }
 
