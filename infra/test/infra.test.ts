@@ -121,3 +121,14 @@ test('Both Lambdas run the arm64 bootstrap binary on provided.al2023', () => {
     Handler: 'bootstrap',
   }, 2);
 });
+
+test('Both Go Lambdas are told the products and orders table names', () => {
+  template.resourcePropertiesCountIs('AWS::Lambda::Function', {
+    Environment: {
+      Variables: Match.objectLike({
+        PRODUCTS_TABLE: { Ref: Match.stringLikeRegexp('^ProductsTable') },
+        ORDERS_TABLE: { Ref: Match.stringLikeRegexp('^OrdersTable') },
+      }),
+    },
+  }, 2);
+});
