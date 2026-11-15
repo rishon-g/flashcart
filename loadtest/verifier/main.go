@@ -116,8 +116,15 @@ func main() {
 	if err != nil {
 		fail("reading DLQ attributes: %v", err)
 	}
-	visible, _ := strconv.Atoi(attrs.Attributes[string(sqstypes.QueueAttributeNameApproximateNumberOfMessages)])
-	inFlight, _ := strconv.Atoi(attrs.Attributes[string(sqstypes.QueueAttributeNameApproximateNumberOfMessagesNotVisible)])
+	// a missing or malformed count would otherwise read as 0 and pass the empty-DLQ check
+	visible, err := strconv.Atoi(attrs.Attributes[string(sqstypes.QueueAttributeNameApproximateNumberOfMessages)])
+	if err != nil {
+		fail("parsing DLQ visible message count: %v", err)
+	}
+	inFlight, err := strconv.Atoi(attrs.Attributes[string(sqstypes.QueueAttributeNameApproximateNumberOfMessagesNotVisible)])
+	if err != nil {
+		fail("parsing DLQ in-flight message count: %v", err)
+	}
 	dlqDepth := visible + inFlight
 
 	total := confirmed + failed + pending + other
