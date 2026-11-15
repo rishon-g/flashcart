@@ -71,7 +71,7 @@ function Dashboard() {
       await axios.post(`${API_URL}/orders`, null, {
         headers: { 'Idempotency-Key': key },
       })
-      setMessage({ text: 'Order confirmed. Thanks for your purchase.', tone: 'success' })
+      setMessage({ text: 'Order placed. Your payment is being processed.', tone: 'success' })
     } catch (error: any) {
       if (error.response?.status === 409) {
         setMessage({ text: 'Sold out. All units were claimed before your order.', tone: 'error' })
