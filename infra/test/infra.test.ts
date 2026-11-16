@@ -132,3 +132,14 @@ test('Both Go Lambdas are told the products and orders table names', () => {
     },
   }, 2);
 });
+
+test('HTTP API sends every method and path to the API Lambda', () => {
+  template.hasResourceProperties('AWS::ApiGatewayV2::Route', {
+    RouteKey: 'ANY /{proxy+}',
+    Target: Match.objectLike({ 'Fn::Join': Match.anyValue() }),
+  });
+  template.hasResourceProperties('AWS::ApiGatewayV2::Integration', {
+    IntegrationType: 'AWS_PROXY',
+    IntegrationUri: { 'Fn::GetAtt': [Match.stringLikeRegexp('FlashCartApiLambda'), 'Arn'] },
+  });
+});
