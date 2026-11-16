@@ -67,7 +67,7 @@ function Dashboard() {
     setBuying(true)
     setMessage({ text: 'Placing your order…', tone: 'info' })
     try {
-      const key = `manual-click-${Math.random()}`
+      const key = `manual-click-${crypto.randomUUID()}`
       await axios.post(`${API_URL}/orders`, null, {
         headers: { 'Idempotency-Key': key },
       })
