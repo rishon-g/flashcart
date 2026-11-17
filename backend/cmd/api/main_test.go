@@ -90,6 +90,16 @@ func TestPreflightAllowsTheCustomHeaders(t *testing.T) {
 	}
 }
 
+// Preflights are answered before routing, so the nil client is never used.
+func TestPreflightIsAnsweredOnEveryPath(t *testing.T) {
+	for _, path := range []string{"/products/FLASH-TV-001", "/admin/products", "/nope"} {
+		resp, _ := handler(context.Background(), request("OPTIONS", path, nil))
+		if resp.StatusCode != 200 {
+			t.Errorf("OPTIONS %s: status = %d, want 200", path, resp.StatusCode)
+		}
+	}
+}
+
 func TestBuildResponseReturnsJSONWithCORSHeaders(t *testing.T) {
 	resp, err := buildResponse(409, map[string]string{"error": "SOLD_OUT"})
 	if err != nil {
