@@ -17,6 +17,9 @@ export const options = {
 
 // runs once before the test to seed 500 units
 export function setup() {
+  if (!API_URL) {
+    exec.test.abort('API_URL is not set. Pass -e API_URL=https://<api-id>.execute-api.<region>.amazonaws.com');
+  }
   console.log(`Seeding database at ${API_URL}...`);
   const res = http.post(`${API_URL}/admin/products`, null, {
     headers: { 'X-Admin-Token': ADMIN_TOKEN },
