@@ -90,6 +90,16 @@ func TestPreflightAllowsTheCustomHeaders(t *testing.T) {
 	}
 }
 
+func TestPreflightAllowsTheMethodsTheAPIServes(t *testing.T) {
+	resp, _ := handler(context.Background(), request("OPTIONS", "/orders", nil))
+	allowed := resp.Headers["Access-Control-Allow-Methods"]
+	for _, m := range []string{"GET", "POST"} {
+		if !strings.Contains(allowed, m) {
+			t.Errorf("Access-Control-Allow-Methods %q is missing %s", allowed, m)
+		}
+	}
+}
+
 // Preflights are answered before routing, so the nil client is never used.
 func TestPreflightIsAnsweredOnEveryPath(t *testing.T) {
 	for _, path := range []string{"/products/FLASH-TV-001", "/admin/products", "/nope"} {
