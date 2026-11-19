@@ -86,6 +86,9 @@ func TestIsAlreadyProcessed(t *testing.T) {
 	if isAlreadyProcessed(tce) {
 		t.Error("only the first cancellation reason (the order update) should count")
 	}
+	if isAlreadyProcessed(&types.TransactionCanceledException{}) {
+		t.Error("a cancelled transaction with no cancellation reasons should not count")
+	}
 }
 
 // the SDK returns service exceptions wrapped in an operation error, so the check must unwrap
