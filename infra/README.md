@@ -1,6 +1,6 @@
-# Welcome to your CDK TypeScript project
+# FlashCart infrastructure
 
-This is a blank project for CDK development with TypeScript.
+The CDK app that defines `InfraStack`: the DynamoDB tables, EventBridge pipe, SQS queues, both Go Lambdas, the HTTP API, the CloudFront site, alarms, and the GitHub deploy role. Build the Lambda `bootstrap` binaries and `web/dist` before deploying (see the root README's **Getting started**).
 
 The `cdk.json` file tells the CDK Toolkit how to execute your app.
 
