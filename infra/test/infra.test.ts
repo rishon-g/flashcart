@@ -143,3 +143,9 @@ test('HTTP API sends every method and path to the API Lambda', () => {
     IntegrationUri: { 'Fn::GetAtt': [Match.stringLikeRegexp('FlashCartApiLambda'), 'Arn'] },
   });
 });
+
+test('HTTP API answers browser preflights for any origin, method and header', () => {
+  template.hasResourceProperties('AWS::ApiGatewayV2::Api', {
+    CorsConfiguration: { AllowOrigins: ['*'], AllowMethods: ['*'], AllowHeaders: ['*'] },
+  });
+});
