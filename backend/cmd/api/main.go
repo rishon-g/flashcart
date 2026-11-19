@@ -94,6 +94,7 @@ func handleGetProduct(ctx context.Context, req events.APIGatewayV2HTTPRequest) (
 
 	stockAttr, ok := result.Item["stock"].(*types.AttributeValueMemberN)
 	if !ok {
+		slog.Error("Product has no numeric stock attribute", slog.String("productId", productID))
 		return buildResponse(500, map[string]string{"error": "Internal Server Error"})
 	}
 	stock := stockAttr.Value
@@ -153,6 +154,7 @@ func handleGetOrder(ctx context.Context, req events.APIGatewayV2HTTPRequest) (ev
 	}
 	status, ok := result.Item["status"].(*types.AttributeValueMemberS)
 	if !ok {
+		slog.Error("Order has no string status attribute", slog.String("orderId", orderID))
 		return buildResponse(500, map[string]string{"error": "Internal Server Error"})
 	}
 	return buildResponse(200, map[string]string{"orderId": orderID, "status": status.Value})
