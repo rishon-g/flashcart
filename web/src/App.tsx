@@ -52,8 +52,8 @@ function Dashboard() {
       })
       setMessage({ text: `Warehouse restocked to ${TOTAL_STOCK} TVs.`, tone: 'success' })
       queryClient.invalidateQueries({ queryKey: ['tvStock'] })
-    } catch (error: any) {
-      if (error.response?.status === 401) {
+    } catch (error) {
+      if (axios.isAxiosError(error) && error.response?.status === 401) {
         setMessage({ text: 'Restock refused. Check the admin token.', tone: 'error' })
       } else {
         setMessage({ text: 'Restock failed. Check the API and try again.', tone: 'error' })
@@ -72,8 +72,8 @@ function Dashboard() {
         headers: { 'Idempotency-Key': key },
       })
       setMessage({ text: 'Order placed. Your payment is being processed.', tone: 'success' })
-    } catch (error: any) {
-      if (error.response?.status === 409) {
+    } catch (error) {
+      if (axios.isAxiosError(error) && error.response?.status === 409) {
         setMessage({ text: 'Sold out. All units were claimed before your order.', tone: 'error' })
       } else {
         setMessage({ text: 'Your order didn’t go through. Try again.', tone: 'error' })
