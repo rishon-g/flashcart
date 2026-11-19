@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math/rand"
 	"os"
 	"time"
@@ -125,7 +126,7 @@ func parsePipeMessage(body string) (string, string) {
 	
 	err := json.Unmarshal([]byte(body), &payload)
 	if err != nil {
-		fmt.Println("JSON Parse Error:", err)
+		slog.Error("Could not parse pipe message", slog.String("error", err.Error()))
 		return "", ""
 	}
 	
