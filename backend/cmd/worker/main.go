@@ -41,6 +41,7 @@ func handler(ctx context.Context, sqsEvent events.SQSEvent) (events.SQSEventResp
 		
 		// a message we can't parse will never succeed, so fail it and let sqs move it to the dlq
 		if orderID == "" || productID == "" {
+			slog.Error("Pipe message is missing orderId or productId", slog.String("messageId", message.MessageId))
 			failures = append(failures, events.SQSBatchItemFailure{ItemIdentifier: message.MessageId})
 			continue
 		}
