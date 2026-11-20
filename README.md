@@ -133,7 +133,7 @@ All responses are JSON with CORS headers. The base URL is the `ApiUrl` stack out
 | Method | Path | Description |
 | --- | --- | --- |
 | `GET` | `/products/{id}` | Returns `{"productId", "stock"}` (`stock` is a string), or `404`. The dashboard polls `/products/FLASH-TV-001` every second. |
-| `POST` | `/orders` | Orders 1 unit of `FLASH-TV-001` (the body is ignored). Requires `Idempotency-Key`. Returns `201` for a new order, `200` for a replay (even when sold out), `400` if the header is missing, and `409` when sold out. |
+| `POST` | `/orders` | Orders 1 unit of `FLASH-TV-001` (the body is ignored). Requires `Idempotency-Key`. Returns `201` for a new order, `200` for a replay (even when sold out), `400` if the header is missing or longer than 2048 bytes, and `409` when sold out. |
 | `GET` | `/orders/{id}` | Returns `{"orderId", "status"}` with status `PENDING`, `CONFIRMED`, or `FAILED`, or `404`. |
 | `POST` | `/admin/products` | Requires `X-Admin-Token` (`401` otherwise). Sets `FLASH-TV-001` stock to 500 and returns `201`. Existing orders are kept. |
 
