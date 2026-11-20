@@ -130,6 +130,7 @@ function Dashboard() {
             aria-valuemin={0}
             aria-valuemax={TOTAL_STOCK}
             aria-valuenow={count ?? 0}
+            aria-valuetext={count === null ? 'Checking inventory' : `${count} of ${TOTAL_STOCK} units`}
           >
             <div className={`meter-fill ${level}`} style={{ width: `${percent}%` }} />
           </div>
