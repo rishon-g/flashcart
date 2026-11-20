@@ -106,6 +106,10 @@ func handleCreateOrder(ctx context.Context, req events.APIGatewayV2HTTPRequest) 
 	if idempotencyKey == "" {
 		return buildResponse(400, map[string]string{"error": "Missing Idempotency-Key header"})
 	}
+	// it becomes the orders table key, and dynamodb rejects partition keys over 2048 bytes
+	if len(idempotencyKey) > 2048 {
+		return buildResponse(400, map[string]string{"error": "Idempotency-Key header is too long"})
+	}
 
 	order := inventory.Order{
 		OrderID:   idempotencyKey,

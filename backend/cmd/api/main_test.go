@@ -31,6 +31,7 @@ func TestHandlerRejectsRequestsBeforeTouchingDynamo(t *testing.T) {
 		{"empty order id", request("GET", "/orders/", nil), 404, "Order not found"},
 		{"nested order path", request("GET", "/orders/o-1/extra", nil), 404, "Order not found"},
 		{"order without idempotency key", request("POST", "/orders", nil), 400, "Missing Idempotency-Key header"},
+		{"order with an oversized idempotency key", request("POST", "/orders", map[string]string{"idempotency-key": strings.Repeat("k", 2049)}), 400, "Idempotency-Key header is too long"},
 		{"wrong method on products", request("POST", "/products/FLASH-TV-001", nil), 404, "Route not found"},
 		{"get orders without an id segment", request("GET", "/orders", nil), 404, "Route not found"},
 		{"post to a path that only starts with /orders", request("POST", "/ordersfoo", map[string]string{"idempotency-key": "k"}), 404, "Route not found"},
