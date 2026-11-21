@@ -35,6 +35,7 @@ func TestHandlerRejectsRequestsBeforeTouchingDynamo(t *testing.T) {
 		{"wrong method on products", request("POST", "/products/FLASH-TV-001", nil), 404, "Route not found"},
 		{"get on the admin seed route", request("GET", "/admin/products", nil), 404, "Route not found"},
 		{"get orders without an id segment", request("GET", "/orders", nil), 404, "Route not found"},
+		{"delete on an order", request("DELETE", "/orders/o-1", nil), 404, "Route not found"},
 		{"post to a path that only starts with /orders", request("POST", "/ordersfoo", map[string]string{"idempotency-key": "k"}), 404, "Route not found"},
 		{"post to a path that only starts with /admin/products", request("POST", "/admin/products/extra", nil), 404, "Route not found"},
 	}
