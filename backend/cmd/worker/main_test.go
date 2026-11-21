@@ -26,6 +26,7 @@ func TestParsePipeMessage(t *testing.T) {
 		{"missing order", `{"dynamodb":{"NewImage":{"productId":{"S":"FLASH-TV-001"}}}}`, "", "FLASH-TV-001"},
 		{"no new image", `{"dynamodb":{}}`, "", ""},
 		{"not json", `not json`, "", ""},
+		{"array of records", `[{"dynamodb":{"NewImage":{"orderId":{"S":"o-1"},"productId":{"S":"FLASH-TV-001"}}}}]`, "", ""},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
