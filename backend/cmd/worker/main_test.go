@@ -123,7 +123,20 @@ func TestLogEMFMetricEmitsValidEMFJSON(t *testing.T) {
 	if got["OrderConfirmed"] != float64(3) {
 		t.Errorf("OrderConfirmed = %v, want 3", got["OrderConfirmed"])
 	}
-	if _, ok := got["_aws"]; !ok {
-		t.Error("missing _aws metadata block")
+	meta, ok := got["_aws"].(map[string]any)
+	if !ok {
+		t.Fatal("missing _aws metadata block")
+	}
+	directives, _ := meta["CloudWatchMetrics"].([]any)
+	if len(directives) != 1 {
+		t.Fatalf("got %d CloudWatchMetrics directives, want 1", len(directives))
+	}
+	directive, _ := directives[0].(map[string]any)
+	if directive["Namespace"] != "FlashCart" {
+		t.Errorf("Namespace = %v, want FlashCart", directive["Namespace"])
+	}
+	metrics, _ := directive["Metrics"].([]any)
+	if len(metrics) != 1 || metrics[0].(map[string]any)["Name"] != "OrderConfirmed" {
+		t.Errorf("Metrics = %v, want one metric named OrderConfirmed", metrics)
 	}
 }
