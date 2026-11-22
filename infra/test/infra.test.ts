@@ -149,3 +149,10 @@ test('HTTP API answers browser preflights for any origin, method and header', ()
     CorsConfiguration: { AllowOrigins: ['*'], AllowMethods: ['*'], AllowHeaders: ['*'] },
   });
 });
+
+test('Admin token secret is a generated 32-character token with no punctuation', () => {
+  // the token is pasted into an HTTP header, so it must not need escaping
+  template.hasResourceProperties('AWS::SecretsManager::Secret', {
+    GenerateSecretString: { PasswordLength: 32, ExcludePunctuation: true },
+  });
+});
