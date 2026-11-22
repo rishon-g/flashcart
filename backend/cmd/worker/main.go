@@ -54,6 +54,7 @@ func handler(ctx context.Context, sqsEvent events.SQSEvent) (events.SQSEventResp
 				continue // redelivery, the order is no longer pending so don't refund twice
 			}
 			if err != nil {
+				slog.Error("Refund failed", slog.String("orderId", orderID), slog.String("error", err.Error()))
 				failures = append(failures, events.SQSBatchItemFailure{ItemIdentifier: message.MessageId})
 				continue
 			}
@@ -67,6 +68,7 @@ func handler(ctx context.Context, sqsEvent events.SQSEvent) (events.SQSEventResp
 			continue
 		}
 		if err != nil {
+			slog.Error("Confirm failed", slog.String("orderId", orderID), slog.String("error", err.Error()))
 			failures = append(failures, events.SQSBatchItemFailure{ItemIdentifier: message.MessageId})
 		} else {
 			// count confirmed orders
