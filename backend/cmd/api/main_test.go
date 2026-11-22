@@ -62,6 +62,8 @@ func TestAdminSeedRequiresTheToken(t *testing.T) {
 	for name, headers := range map[string]map[string]string{
 		"missing": nil,
 		"wrong":   {"x-admin-token": "nope"},
+		"prefix":  {"x-admin-token": "s3c"},
+		"longer":  {"x-admin-token": "s3cret!"},
 	} {
 		resp, _ := handler(context.Background(), request("POST", "/admin/products", headers))
 		if resp.StatusCode != 401 {
