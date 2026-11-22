@@ -1,32 +1,14 @@
-# React + TypeScript + Vite
+# FlashCart dashboard
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+React + TypeScript dashboard for the FlashCart flash sale, built with Vite and served from S3 and CloudFront.
 
-Currently, two official plugins are available:
+It polls `GET /products/FLASH-TV-001` every second for the remaining stock, places orders with `POST /orders` (each click sends a fresh `Idempotency-Key`), and restocks the sale through `POST /admin/products` with the admin token pasted into the footer.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+The API base URL is hardcoded as `API_URL` in [`src/App.tsx`](src/App.tsx); set it to your stack's `ApiUrl` output before building.
 
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the Oxlint configuration
-
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
-
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
+```bash
+npm ci
+npm run dev    # local dev server
+npm run lint   # oxlint
+npm run build  # type-check and build to dist/ for the CDK deploy
 ```
-
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
