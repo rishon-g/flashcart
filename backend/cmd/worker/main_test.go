@@ -43,16 +43,17 @@ func TestHandlerReportsMalformedMessagesAsBatchFailures(t *testing.T) {
 	event := events.SQSEvent{Records: []events.SQSMessage{
 		{MessageId: "m-1", Body: "not json"},
 		{MessageId: "m-2", Body: `{"dynamodb":{"NewImage":{"orderId":{"S":"o-1"}}}}`},
+		{MessageId: "m-3", Body: `{"dynamodb":{"NewImage":{"productId":{"S":"FLASH-TV-001"}}}}`},
 	}}
 
 	resp, err := handler(context.Background(), event)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(resp.BatchItemFailures) != 2 {
-		t.Fatalf("got %d batch failures, want 2", len(resp.BatchItemFailures))
+	if len(resp.BatchItemFailures) != 3 {
+		t.Fatalf("got %d batch failures, want 3", len(resp.BatchItemFailures))
 	}
-	for i, id := range []string{"m-1", "m-2"} {
+	for i, id := range []string{"m-1", "m-2", "m-3"} {
 		if got := resp.BatchItemFailures[i].ItemIdentifier; got != id {
 			t.Errorf("failure %d = %q, want %q", i, got, id)
 		}
