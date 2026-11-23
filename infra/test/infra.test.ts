@@ -156,3 +156,11 @@ test('Admin token secret is a generated 32-character token with no punctuation',
     GenerateSecretString: { PasswordLength: 32, ExcludePunctuation: true },
   });
 });
+
+test('Both tables use on-demand billing so a sale spike is not throttled by provisioned capacity', () => {
+  const tables = template.findResources('AWS::DynamoDB::Table');
+  expect(Object.keys(tables)).toHaveLength(2);
+  for (const table of Object.values(tables)) {
+    expect(table.Properties.BillingMode).toBe('PAY_PER_REQUEST');
+  }
+});
