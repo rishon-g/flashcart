@@ -20,6 +20,9 @@ export function setup() {
   if (!API_URL) {
     exec.test.abort('API_URL is not set. Pass -e API_URL=https://<api-id>.execute-api.<region>.amazonaws.com');
   }
+  if (!ADMIN_TOKEN) {
+    exec.test.abort('ADMIN_TOKEN is not set. Pass -e ADMIN_TOKEN=<token from the AdminTokenSecretArn secret>');
+  }
   console.log(`Seeding database at ${API_URL}...`);
   const res = http.post(`${API_URL}/admin/products`, null, {
     headers: { 'X-Admin-Token': ADMIN_TOKEN },
