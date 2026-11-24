@@ -27,8 +27,11 @@ export function setup() {
   const res = http.post(`${API_URL}/admin/products`, null, {
     headers: { 'X-Admin-Token': ADMIN_TOKEN },
   });
+  if (res.status === 401) {
+    exec.test.abort('Seeding was refused (401). ADMIN_TOKEN does not match the AdminTokenSecretArn secret');
+  }
   if (res.status !== 201) {
-    exec.test.abort(`Seeding failed with status ${res.status}. Is ADMIN_TOKEN set?`);
+    exec.test.abort(`Seeding failed with status ${res.status}: ${res.body}`);
   }
 }
 
