@@ -164,3 +164,9 @@ test('Both tables use on-demand billing so a sale spike is not throttled by prov
     expect(table.Properties.BillingMode).toBe('PAY_PER_REQUEST');
   }
 });
+
+test('Stack outputs the values the README says a deploy prints', () => {
+  for (const name of ['ApiUrl', 'WebsiteUrl', 'AdminTokenSecretArn', 'AlarmTopicArn', 'GitHubRoleArn']) {
+    template.hasOutput(name, { Value: Match.anyValue() });
+  }
+});
