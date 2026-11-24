@@ -170,3 +170,17 @@ test('Stack outputs the values the README says a deploy prints', () => {
     template.hasOutput(name, { Value: Match.anyValue() });
   }
 });
+
+test('GitHub deploy role may only assume the CDK bootstrap roles', () => {
+  const roleId = Object.keys(template.findResources('AWS::IAM::Role', {
+    Properties: { Description: 'Role assumed by GitHub Actions to deploy the CDK app' },
+  }))[0];
+  const policies = Object.values(template.findResources('AWS::IAM::Policy', {
+    Properties: { Roles: [{ Ref: roleId }] },
+  }));
+  expect(policies).toHaveLength(1);
+  const statements = policies[0].Properties.PolicyDocument.Statement;
+  expect(statements).toHaveLength(1);
+  expect(statements[0].Action).toBe('sts:AssumeRole');
+  expect(JSON.stringify(statements[0].Resource)).toContain(':role/cdk-*');
+});
