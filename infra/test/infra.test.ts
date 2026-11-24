@@ -184,3 +184,19 @@ test('GitHub deploy role may only assume the CDK bootstrap roles', () => {
   expect(statements[0].Action).toBe('sts:AssumeRole');
   expect(JSON.stringify(statements[0].Resource)).toContain(':role/cdk-*');
 });
+
+test('GitHub deploy role only trusts STS-audience tokens from the deploy.yml workflow on main', () => {
+  template.hasResourceProperties('AWS::IAM::Role', {
+    Description: 'Role assumed by GitHub Actions to deploy the CDK app',
+    AssumeRolePolicyDocument: {
+      Statement: [Match.objectLike({
+        Condition: {
+          StringEquals: Match.objectLike({
+            'token.actions.githubusercontent.com:aud': 'sts.amazonaws.com',
+            'token.actions.githubusercontent.com:job_workflow_ref': 'rishon-g/flashcart/.github/workflows/deploy.yml@refs/heads/main',
+          }),
+        },
+      })],
+    },
+  });
+});
