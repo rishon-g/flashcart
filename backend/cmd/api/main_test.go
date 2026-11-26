@@ -69,6 +69,9 @@ func TestAdminSeedRequiresTheToken(t *testing.T) {
 		if resp.StatusCode != 401 {
 			t.Errorf("%s token: status = %d, want 401", name, resp.StatusCode)
 		}
+		if want := `{"error":"Invalid or missing X-Admin-Token header"}`; resp.Body != want {
+			t.Errorf("%s token: body = %s, want %s", name, resp.Body, want)
+		}
 	}
 }
 
