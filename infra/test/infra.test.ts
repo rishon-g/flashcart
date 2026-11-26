@@ -208,3 +208,10 @@ test('Outbox pipe reads one new stream record at a time, since the worker parses
     }),
   });
 });
+
+test('Outbox pipe carries the orders table stream to the fulfillment queue, not the DLQ', () => {
+  template.hasResourceProperties('AWS::Pipes::Pipe', {
+    Source: { 'Fn::GetAtt': [Match.stringLikeRegexp('^OrdersTable'), 'StreamArn'] },
+    Target: { 'Fn::GetAtt': [Match.stringLikeRegexp('^FulfillmentQueue'), 'Arn'] },
+  });
+});
