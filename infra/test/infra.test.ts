@@ -215,3 +215,10 @@ test('Outbox pipe carries the orders table stream to the fulfillment queue, not 
     Target: { 'Fn::GetAtt': [Match.stringLikeRegexp('^FulfillmentQueue'), 'Arn'] },
   });
 });
+
+test('Only the worker Lambda consumes the fulfillment queue', () => {
+  const mappings = Object.values(template.findResources('AWS::Lambda::EventSourceMapping'));
+  expect(mappings).toHaveLength(1);
+  expect(mappings[0].Properties.EventSourceArn['Fn::GetAtt'][0]).toMatch(/^FulfillmentQueue/);
+  expect(mappings[0].Properties.FunctionName.Ref).toMatch(/^FlashCartWorkerLambda/);
+});
