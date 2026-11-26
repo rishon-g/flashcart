@@ -200,3 +200,11 @@ test('GitHub deploy role only trusts STS-audience tokens from the deploy.yml wor
     },
   });
 });
+
+test('Outbox pipe reads one new stream record at a time, since the worker parses one record per message', () => {
+  template.hasResourceProperties('AWS::Pipes::Pipe', {
+    SourceParameters: Match.objectLike({
+      DynamoDBStreamParameters: { StartingPosition: 'LATEST', BatchSize: 1 },
+    }),
+  });
+});
