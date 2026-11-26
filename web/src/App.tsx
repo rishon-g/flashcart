@@ -48,7 +48,7 @@ function Dashboard() {
     setMessage({ text: 'Loading TVs into the warehouse…', tone: 'info' })
     try {
       await axios.post(`${API_URL}/admin/products`, null, {
-        headers: { 'X-Admin-Token': adminToken },
+        headers: { 'X-Admin-Token': adminToken.trim() }, // the generated token has no spaces, so drop any picked up when pasting
       })
       setMessage({ text: `Warehouse restocked to ${TOTAL_STOCK} TVs.`, tone: 'success' })
       queryClient.invalidateQueries({ queryKey: ['tvStock'] })
@@ -160,7 +160,7 @@ function Dashboard() {
             value={adminToken}
             onChange={(e) => setAdminToken(e.target.value)}
           />
-          <button onClick={handleSeed} className="admin-btn" disabled={resetting || adminToken === ''}>
+          <button onClick={handleSeed} className="admin-btn" disabled={resetting || adminToken.trim() === ''}>
             {resetting ? 'Restocking…' : 'Reset warehouse'}
           </button>
         </footer>
