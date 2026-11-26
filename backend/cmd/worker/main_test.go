@@ -24,6 +24,7 @@ func TestParsePipeMessage(t *testing.T) {
 		{"stream record", `{"dynamodb":{"NewImage":{"orderId":{"S":"o-1"},"productId":{"S":"FLASH-TV-001"}}}}`, "o-1", "FLASH-TV-001"},
 		{"missing product", `{"dynamodb":{"NewImage":{"orderId":{"S":"o-1"}}}}`, "o-1", ""},
 		{"missing order", `{"dynamodb":{"NewImage":{"productId":{"S":"FLASH-TV-001"}}}}`, "", "FLASH-TV-001"},
+		{"numeric order id", `{"dynamodb":{"NewImage":{"orderId":{"N":"1"},"productId":{"S":"FLASH-TV-001"}}}}`, "", "FLASH-TV-001"},
 		{"no new image", `{"dynamodb":{}}`, "", ""},
 		{"not json", `not json`, "", ""},
 		{"array of records", `[{"dynamodb":{"NewImage":{"orderId":{"S":"o-1"},"productId":{"S":"FLASH-TV-001"}}}}]`, "", ""},
