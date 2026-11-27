@@ -222,3 +222,10 @@ test('Only the worker Lambda consumes the fulfillment queue', () => {
   expect(mappings[0].Properties.EventSourceArn['Fn::GetAtt'][0]).toMatch(/^FulfillmentQueue/);
   expect(mappings[0].Properties.FunctionName.Ref).toMatch(/^FlashCartWorkerLambda/);
 });
+
+test('Website deploy invalidates every CloudFront path so a new dashboard is served right away', () => {
+  template.hasResourceProperties('Custom::CDKBucketDeployment', {
+    DistributionId: { Ref: Match.stringLikeRegexp('^FlashCartDistribution') },
+    DistributionPaths: ['/*'],
+  });
+});
